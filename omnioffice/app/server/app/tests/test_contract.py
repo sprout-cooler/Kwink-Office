@@ -354,10 +354,11 @@ class TestSettingsLayering(unittest.TestCase):
         details = {m["id"]: m for m in self.ss.QWEN_MODELS}
         self.assertEqual(
             self.ss.QWEN_MODEL_OPTIONS[0],
-            "qwen3-vl-plus",
+            "qwen3.8-flash",
             "推荐档应排在模型下拉第一位",
         )
-        for required in ("qwen3-vl-plus", "qwen3-vl-flash"):
+        # 官方 2026-10-11 视觉模型页的现役主力，缺一则用户只能选到旧版（会 404）
+        for required in ("qwen3.8-flash", "qwen3.8-max"):
             self.assertIn(required, details, f"缺少模型 {required}")
         # 每项都要有说明与合法 tier（前端据此渲染角标）
         valid_tiers = {"recommended", "economy", "stable", "strong", "special", "legacy"}
@@ -370,8 +371,12 @@ class TestSettingsLayering(unittest.TestCase):
         self.assertIn("strong", tiers, "缺少高能力档模型")
 
     def test_legacy_models_marked_not_recommended(self):
-        """旧版模型若保留（兼容存量配置），必须标记为 legacy 以便前端警示。"""
-        for mid in ("qwen-vl-max", "qwen-vl-plus"):
+        """旧版模型若保留（兼容存量配置），必须标记为 legacy 以便前端警示。
+
+        qwen3-vl-* 同样归入旧版：官方 2026-10-11 视觉模型页已不作为首选推荐，
+        qwen3-vl-flash 甚至不在列表中，调用会 404。
+        """
+        for mid in ("qwen-vl-max", "qwen-vl-plus", "qwen3-vl-plus", "qwen3-vl-flash"):
             d = next((m for m in self.ss.QWEN_MODELS if m["id"] == mid), None)
             if d is None:
                 continue
@@ -381,7 +386,8 @@ class TestSettingsLayering(unittest.TestCase):
     def test_providers_expose_model_details(self):
         """百炼类服务商必须带 modelDetails，供前端渲染说明与档位角标。"""
         for p in self.ss.AI_PROVIDERS:
-            if p["id"] in ("qwen", "qwen_workspace"):
+            # 所有百炼类预设（通用域名各地域 + 业务空间专属域名）都要带清单
+            if p["id"].startswith("qwen"):
                 self.assertTrue(p.get("modelDetails"), f"{p['id']} 缺少 modelDetails")
                 self.assertEqual(p["models"], self.ss.QWEN_MODEL_OPTIONS, f"{p['id']} models 应与清单一致")
 

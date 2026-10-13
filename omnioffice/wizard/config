@@ -9,10 +9,13 @@
         "required": false,
         "initValue": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "options": [
-          { "label": "通义千问（百炼·DashScope 通用域名）", "value": "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+          { "label": "通义千问（北京 · DashScope 通用域名）", "value": "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+          { "label": "通义千问（新加坡 · DashScope 通用域名）", "value": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1" },
+          { "label": "通义千问（中国香港 · DashScope 通用域名）", "value": "https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1" },
+          { "label": "通义千问（美国弗吉尼亚 · DashScope 通用域名）", "value": "https://dashscope-us.aliyuncs.com/compatible-mode/v1" },
           { "label": "豆包（火山方舟）", "value": "https://ark.cn-beijing.volces.com/api/v3" }
         ],
-        "tips": "DashScope 通用域名兼容所有业务空间，但阿里云官方自 2026-09-30 起该域名不再支持新特性；若你在百炼控制台有业务空间专属地址（形如 https://llm-xxxx.cn-beijing.maas.aliyuncs.com），请在下一项直接粘贴，会自动优先使用"
+        "tips": "这里只是「没有专属域名时的备选」。⚠️ DashScope 通用域名自 2026-09-30 起不再支持新特性，用它调用 qwen3.8 等现役模型会返回 404。请优先在下一项粘贴你的业务空间专属地址；各地域的 API Key 与模型列表不能混用，请选择与你的 Key 一致的地域"
       },
       {
         "type": "text",
@@ -20,15 +23,15 @@
         "label": "业务空间专属域名（推荐，可留空）",
         "required": false,
         "initValue": "",
-        "tips": "在百炼控制台创建 API Key 后的弹窗里复制「API Host」，粘贴到此处。格式 https://{WorkspaceId}.{地域}.maas.aliyuncs.com/compatible-mode/v1（北京 cn-beijing / 新加坡 ap-southeast-1 / 中国香港 cn-hongkong）。优势：仅访问当前业务空间、并发承载更高、请求超时 3600 秒。留空则使用上方所选服务的默认地址"
+        "tips": "推荐填写，北京/新加坡/东京/法兰克福/香港地域必须使用。最快拿法：百炼控制台「API Key」页导出 CSV，里面的 openAiCompatible 一列就是完整地址，整段粘贴即可；或在创建 Key 的弹窗里复制「API Host」。格式 https://{WorkspaceId}.{地域}.maas.aliyuncs.com/compatible-mode/v1（北京 cn-beijing / 新加坡 ap-southeast-1 / 中国香港 cn-hongkong）。优势：仅访问当前业务空间、并发承载更高、请求超时 3600 秒。留空则使用上方所选服务的默认地址"
       },
       {
         "type": "text",
         "field": "llm_model",
         "label": "模型名称",
         "required": false,
-        "initValue": "qwen3-vl-plus",
-        "tips": "周报识别需模型支持图像输入 + JSON 结构化输出。推荐 qwen3-vl-plus（均衡，首选）；截图清晰可选 qwen3-vl-flash（更快更省）；版式复杂或文字模糊建议 qwen3.8-flash 或 qwen3.7-plus。豆包请填你的 endpoint id（ep-xxxx）。安装后可在「设置 → 应用配置」中随时修改"
+        "initValue": "qwen3.8-flash",
+        "tips": "周报识别需模型支持图像输入 + JSON 结构化输出。推荐 qwen3.8-flash（现役、省钱、1M 上下文，首选）；截图模糊或版式复杂可选 qwen3.8-max（最强，费用最高）或 qwen3.7-plus（均衡）；纯文字提取可选 qwen3.5-ocr。旧版 qwen3-vl-plus / qwen3-vl-flash 官方已不推荐，部分地域会返回 404。豆包请填你的 endpoint id（ep-xxxx）。安装后可在「设置 → 应用配置」中随时修改"
       },
       {
         "type": "password",

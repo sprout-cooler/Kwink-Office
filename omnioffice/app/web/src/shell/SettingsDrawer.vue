@@ -244,19 +244,20 @@ async function resetModuleAi(moduleId: string, name: string) {
               <li>
                 <b>模型怎么选</b>：周报识别要求模型支持<b>图像输入 + JSON 结构化输出</b>，下拉里已按此筛选
                 <ul>
-                  <li><b>qwen3-vl-plus</b>（推荐）：准确率与费用均衡，综合首选</li>
-                  <li><b>qwen3-vl-flash</b>：速度快、费用低；截图清晰时效果接近 plus</li>
-                  <li><b>qwen3.8-flash / qwen3.7-plus</b>：全模态通用模型，版式复杂或文字模糊时更稳，费用略高</li>
+                  <li><b>qwen3.8-flash</b>（推荐）：现役轻量旗舰，1M 上下文，省钱且够用，综合首选</li>
+                  <li><b>qwen3.8-max</b>：能力最强，版式复杂或截图模糊时用它，费用最高</li>
+                  <li><b>qwen3.7-plus / qwen3.7-flash</b>：能力接近旗舰 / 更快更省，按预算选</li>
                   <li><b>qwen3.5-ocr</b>：仅文字提取专项，不判断任务归属与时间语义，周报一般不首选</li>
+                  <li><b>qwen3-vl-plus / qwen3-vl-flash</b>：旧版，官方已不推荐，部分地域会返回 404</li>
                 </ul>
               </li>
               <li>
-                <b>关于阿里云百炼的服务地址</b>：官方已将模型推理接入分为三种域名
+                <b>关于阿里云百炼的服务地址（404 必看）</b>：官方已将模型推理接入分为三种域名
                 <ul>
-                  <li><b>业务空间专属域名（推荐）</b>：<code>https://{WorkspaceId}.{地域}.maas.aliyuncs.com/compatible-mode/v1</code>。仅访问当前业务空间、并发承载更高、请求超时 3600 秒。<code>WorkspaceId</code> 在百炼控制台创建 API Key 后的弹窗里，复制 <b>API Host</b> 即可拿到完整地址，直接粘贴到「服务地址」输入框即可。</li>
-                  <li><b>DashScope 通用域名</b>：<code>https://dashscope.aliyuncs.com/compatible-mode/v1</code>。兼容所有业务空间，但官方自 2026-09-30 起不再支持新特性，存量业务建议尽快迁移。</li>
+                  <li><b>业务空间专属域名（推荐，且多数地域必须使用）</b>：<code>https://{WorkspaceId}.{地域}.maas.aliyuncs.com/compatible-mode/v1</code>。最快拿法：百炼控制台「API Key」页<b>导出 CSV</b>，里面的 <code>openAiCompatible</code> 一列就是完整地址，整段粘贴到「服务地址」即可；或在创建 Key 的弹窗里复制 <b>API Host</b>。优势：仅访问当前业务空间、并发更高、超时 3600 秒。</li>
+                  <li><b>DashScope 通用域名</b>：<code>https://dashscope.aliyuncs.com/compatible-mode/v1</code>（北京）、<code>dashscope-intl</code>（新加坡）、<code>cn-hongkong.dashscope</code>（中国香港）、<code>dashscope-us</code>（美国）。⚠️ 官方自 <b>2026-09-30 起不再支持新特性</b>，用它调用 qwen3.8 / qwen3.7 等现役模型会返回 <b>404「地址或模型不存在」</b>。</li>
                 </ul>
-                填写专属域名后，页面会自动识别并显示「已识别为业务空间专属域名」标签。地域 ID 可在 <a href="https://help.aliyun.com/zh/model-studio/regions" target="_blank">官方地域说明</a> 查看（北京 <code>cn-beijing</code>、新加坡 <code>ap-southeast-1</code>、中国香港 <code>cn-hongkong</code> 等）。
+                填写专属域名后，页面会自动识别并显示「已识别为业务空间专属域名」标签。各地域的 API Key 与模型列表<b>不能跨地域混用</b>。地域 ID 可在 <a href="https://help.aliyun.com/zh/model-studio/regions" target="_blank">官方地域说明</a> 查看（北京 <code>cn-beijing</code>、新加坡 <code>ap-southeast-1</code>、中国香港 <code>cn-hongkong</code> 等）。
               </li>
               <li>粘贴 API Key，点「<b>测试连接</b>」确认可用，再点保存。</li>
               <li>也可以在<b>安装应用时</b>的向导中填写，效果相同。</li>

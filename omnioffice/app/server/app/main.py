@@ -273,6 +273,9 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
         api_key = (body.get("api_key") or "").strip() or saved["api_key"]
         base_url = (body.get("base_url") or "").strip() or saved["base_url"]
         model = (body.get("model") or "").strip() or saved["model"]
+        # 缺 scheme 时自动补全协议头（幂等）：本地/内网补 http://，公网补 https://。
+        # 复用 settings_service 的统一实现，避免此处再复制一份规则导致两处不一致。
+        base_url = settings_service.ensure_url_scheme(base_url)
 
         ok, msg = probe_connection(base_url, model, api_key)
         audit.log("settings.ai.test", identity.uid, {"module": module or "default", "ok": ok})

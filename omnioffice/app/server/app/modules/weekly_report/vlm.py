@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urlreq
 
-from ...core.settings_service import AI_PROVIDERS
+# 协议头补全统一走 settings_service（单一事实来源）：
+# 早期此处与 settings_service 各存一份实现，规则一旦调整极易漏改。
+from ...core.settings_service import AI_PROVIDERS, ensure_url_scheme
 
 PROMPT_V3 = """你是工作截图信息抽取助手。截图有两类，先判断类型再抽取，只输出一个 JSON 对象。
 
@@ -172,7 +174,7 @@ class OpenAICompatibleRecognizer:
         if not api_key:
             raise RecognizeError("LLM_API_KEY 为空")
         self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = ensure_url_scheme(base_url.rstrip("/"))
         self.model = model
         # 是否发送 response_format=json_object。
         # 百炼 qwen3 系列支持；豆包/自建网关不一定支持，遇到 400 会自动降级并记住结果。
@@ -309,6 +311,34 @@ def build_recognizer(module: str | None = None):
     )
 
 
+def _not_found_hint(url: str, model: str) -> str:
+    """404「地址或模型不存在」时的可自查指引。
+
+    百炼的三要素必须互相匹配：接入域名所在地域 == API Key 所属地域，
+    且该模型在该地域已上线。否则一律 404，而原始报错只有一句 HTTP 404，
+    用户无法自查，故在此按当前配置给出最可能的原因。
+    """
+    host = url.split("://", 1)[-1].split("/", 1)[0].lower()
+    tips: list[str] = []
+    if host.endswith(".dashscope.aliyuncs.com") or host == "dashscope.aliyuncs.com":
+        tips.append(
+            "当前是 DashScope 通用域名，官方自 2026-09-30 起不再支持新特性，"
+            "调用现役模型会返回 404，请换成业务空间专属域名 "
+            "（https://{WorkspaceId}.{地域}.maas.aliyuncs.com/compatible-mode/v1）"
+        )
+    elif ".maas.aliyuncs.com" in host:
+        tips.append("请核对 WorkspaceId 与地域是否与 API Key 所属地域一致（各地域 Key 不能混用）")
+    else:
+        tips.append("请确认地址完整、以 /compatible-mode/v1 结尾（末尾不要带 /chat/completions）")
+    if model.startswith(("qwen-vl-", "qwen3-vl-")):
+        tips.append(
+            f"模型 {model} 属旧版，官方已不作为首选推荐，该地域可能已不支持，建议改用 qwen3.8-flash"
+        )
+    else:
+        tips.append(f"请到百炼「模型广场」确认 {model} 在你所选地域已上线")
+    return "排查：" + "；".join(tips)
+
+
 def probe_connection(base_url: str, model: str, api_key: str, timeout: int = 15) -> tuple[bool, str]:
     """连通性探测：发一个最小 chat/completions 请求，校验 base_url/model/key 组合可用。
 
@@ -321,7 +351,7 @@ def probe_connection(base_url: str, model: str, api_key: str, timeout: int = 15)
     if not model:
         return False, "模型名称为空"
 
-    url = base_url.rstrip("/")
+    url = ensure_url_scheme(base_url).rstrip("/")
     # 兼容 base_url 误填到 /chat/completions 的情况
     if url.endswith("/chat/completions"):
         url = url[: -len("/chat/completions")]
@@ -343,7 +373,7 @@ def probe_connection(base_url: str, model: str, api_key: str, timeout: int = 15)
         if e.code == 401:
             return False, "API Key 无效或已过期（401）"
         if e.code == 404:
-            return False, f"地址或模型不存在（404）：{detail}"
+            return False, f"地址或模型不存在（404）：{detail}｜{_not_found_hint(url, model)}"
         if e.code == 429:
             return False, "调用频率超限（429），请稍后重试"
         return False, f"HTTP {e.code}：{detail}"
