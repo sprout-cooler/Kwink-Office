@@ -1,0 +1,4 @@
+#!/bin/bash
+# 升级完成回调（fnpack 强制要求）。预留：升级后迁移/校验钩子。
+echo "omnioffice upgrade_callback: upgraded" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+exit 0

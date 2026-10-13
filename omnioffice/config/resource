@@ -1,0 +1,7 @@
+{
+  "docker-project": {
+    "projects": [
+      { "name": "omnioffice", "path": "docker" }
+    ]
+  }
+}

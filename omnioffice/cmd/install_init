@@ -1,0 +1,5 @@
+#!/bin/bash
+# 安装期初始化（fnpack 强制要求的生命周期脚本之一）。
+# 当前无安装期动作：预留点用于后续版本迁移（如 manifest 版本升级时的数据迁移钩子）。
+echo "omnioffice install_init: nothing to do" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+exit 0

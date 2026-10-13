@@ -1,0 +1,8 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+python-multipart>=0.0.20
+openpyxl>=3.1.5
+sqlalchemy>=2.0.36
+# SQLAlchemy 2.0 对 postgresql:// 的默认驱动是 psycopg3（模块名 psycopg），
+# 不是 psycopg2！binary wheel 自带 libpq，无需系统编译环境（v1.0.5 Bad Gateway 根因）
+psycopg[binary]>=3.2,<4

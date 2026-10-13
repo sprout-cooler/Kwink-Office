@@ -1,0 +1,151 @@
+/* 主题变量集中管理（Agent 指南编码规范）；NAS 可能离线：零外部 CDN 依赖 */
+:root {
+  --oo-sidebar-bg: #1f2d3d;
+  --oo-sidebar-active: #2f4b6e;
+  --oo-topbar-bg: #ffffff;
+  --oo-border: #e4e7ed;
+  --oo-text-primary: #303133;
+  --oo-accent: #409eff;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  color: var(--oo-text-primary);
+}
+
+.oo-shell {
+  display: flex;
+  height: 100%;
+}
+
+.oo-side {
+  width: 200px;
+  background: var(--oo-sidebar-bg);
+  color: #cfd8e3;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: width 0.15s ease;
+}
+.oo-side.collapsed {
+  width: 56px;
+}
+.oo-side-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px;
+}
+.oo-settings {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+.oo-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 6px;
+  overflow-y: auto;
+}
+.oo-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.oo-nav-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.oo-nav-item.active {
+  background: var(--oo-sidebar-active);
+  color: #fff;
+}
+.oo-collapse {
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.oo-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.oo-topbar {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  background: var(--oo-topbar-bg);
+  border-bottom: 1px solid var(--oo-border);
+  flex-shrink: 0;
+}
+.oo-title {
+  font-weight: 600;
+}
+.oo-spacer {
+  flex: 1;
+}
+.oo-top-action {
+  background: none;
+  border: none;
+  color: var(--oo-text-primary);
+  cursor: pointer;
+  font-size: 14px;
+}
+.oo-tabs {
+  height: 42px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--oo-border);
+  background: #fafbfc;
+  flex-shrink: 0;
+}
+.oo-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--oo-text-primary);
+  padding: 0 14px;
+  cursor: pointer;
+}
+.oo-tab.active {
+  color: var(--oo-accent);
+  border-bottom-color: var(--oo-accent);
+}
+.oo-panel {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.bootstrap-state {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+  padding: 40px;
+  box-sizing: border-box;
+}

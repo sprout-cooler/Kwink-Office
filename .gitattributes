@@ -1,0 +1,8 @@
+# 平台规则：给 Linux 的文本文件必须 UTF-8 无 BOM + LF（开发避坑指南 / Agent 指南 跨平台类）
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.fpk binary
+*.ttf binary

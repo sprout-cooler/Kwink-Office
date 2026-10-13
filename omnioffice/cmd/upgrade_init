@@ -1,0 +1,4 @@
+#!/bin/bash
+# 升级前回调（fnpack 强制要求）。预留：升级前数据备份钩子。
+echo "omnioffice upgrade_init: pre-upgrade" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+exit 0

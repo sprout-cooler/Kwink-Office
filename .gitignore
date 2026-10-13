@@ -1,0 +1,16 @@
+# 机器本地便携工具与产物
+.tools/
+*.fpk
+# 但保留每个「版本号化」的发布包：盘上不覆盖、git 里也留档
+!omnioffice/omnioffice-*.fpk
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+# 前端构建产物（由 vite 构建生成）
+omnioffice/app/server/public/
+# 本地开发数据
+data/
+*.log
+# WorkBuddy 本地记忆（私人，不入库）
+.workbuddy/

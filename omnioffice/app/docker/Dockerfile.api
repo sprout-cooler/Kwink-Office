@@ -1,0 +1,36 @@
+# api / worker 共用镜像（M0 S5：LibreOffice + 中文字体在构建期装入，发布前必测中文渲染）
+# 若 NAS 拉不动 Docker Hub，将 BASE_IMAGE 改为国内镜像站（如 docker.m.daocloud.io/python:3.12-slim）
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
+
+# 国内 apt 源（NAS 国内网络安装提速，避免构建超时；兼容 deb822 与旧式 sources.list）
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+      sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-calc \
+    fonts-wqy-microhei \
+    poppler-utils \
+    media-types \
+    && rm -rf /var/lib/apt/lists/*
+
+# LibreOffice headless 需要可写 HOME；pip 走清华源
+ENV HOME=/tmp \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+WORKDIR /srv
+
+# 先装依赖再拷源码，充分利用构建缓存
+COPY server/requirements.txt /srv/requirements.txt
+RUN pip install --no-cache-dir -r /srv/requirements.txt
+
+COPY server/ /srv/
+
+# SOCKET_PATH 存在（真机网关形态）→ 监听 Unix Socket；否则 TCP（本地假网关联调）
+EXPOSE 8787
+CMD ["sh", "-c", "if [ -n \"$SOCKET_PATH\" ]; then uvicorn app.main:app --uds \"$SOCKET_PATH\" --log-level info --no-server-header; else uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8787} --log-level info --no-server-header; fi"]

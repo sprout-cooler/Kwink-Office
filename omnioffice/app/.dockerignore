@@ -1,0 +1,9 @@
+# 构建上下文瘦身（真机安装慢的根因之一：node_modules 数百 MB 不必传给 docker daemon）
+web/node_modules
+web/dist
+**/__pycache__
+**/.venv
+
+# 测试资产不进镜像（单测在开发机/打包门禁阶段跑，线上容器不需要）
+# server/public 必须保留（前端产物随镜像分发）
+server/app/tests/fixtures

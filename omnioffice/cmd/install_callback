@@ -1,0 +1,4 @@
+#!/bin/bash
+# 安装完成回调（fnpack 强制要求）。预留：安装后提示语/首次初始化。
+echo "omnioffice install_callback: done" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+exit 0

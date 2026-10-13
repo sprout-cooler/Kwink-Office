@@ -1,0 +1,78 @@
+# Docker 编排（V10 8.7）：api / worker / postgres / redis 四服务。
+# 关键挂载：api 必须挂 ${TRIM_APPDEST} 到 /host 以创建网关 Socket（app.sock）；
+# 数据库/缓存挂 ${TRIM_PKGVAR}（应用运行时数据目录，升级保留）；
+# 用户文件（原图/模板/导出）挂 ${TRIM_APPDEST}/share（安装 target 下的共享目录）。
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: omnioffice-api
+    restart: unless-stopped
+    environment:
+      - GATEWAY_PREFIX=/app/omnioffice
+      - SOCKET_PATH=/host/app.sock
+      - DATA_DIR=/data
+      - APP_VERSION=${APP_VERSION:-1.0.18}
+      - DATABASE_URL=postgresql://omnioffice:omnioffice@postgres:5432/omnioffice
+      - REDIS_URL=redis://redis:6379/0
+      - LLM_API_KEY=${llm_api_key}
+      - LLM_BASE_URL=${llm_base_url}
+      - LLM_BASE_URL_CUSTOM=${llm_base_url_custom}
+      - LLM_MODEL=${llm_model}
+    volumes:
+      - ${TRIM_APPDEST}:/host
+      - ${TRIM_APPDEST}/share:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: omnioffice-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      - DATA_DIR=/data
+      - DATABASE_URL=postgresql://omnioffice:omnioffice@postgres:5432/omnioffice
+      - REDIS_URL=redis://redis:6379/0
+      - LLM_API_KEY=${llm_api_key}
+      - LLM_BASE_URL=${llm_base_url}
+      - LLM_BASE_URL_CUSTOM=${llm_base_url_custom}
+      - LLM_MODEL=${llm_model}
+    volumes:
+      - ${TRIM_APPDEST}/share:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: omnioffice-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=omnioffice
+      - POSTGRES_PASSWORD=omnioffice
+      - POSTGRES_DB=omnioffice
+    volumes:
+      - ${TRIM_PKGVAR}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      # 配合 api 的应用层重试双保险：明确 PG 就绪信号（v1.0.3 Bad Gateway 修复）
+      test: ["CMD-SHELL", "pg_isready -U omnioffice -d omnioffice"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: omnioffice-redis
+    restart: unless-stopped
+    volumes:
+      - ${TRIM_PKGVAR}/redis:/data

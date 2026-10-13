@@ -1,0 +1,51 @@
+[
+  {
+    "stepTitle": "AI 服务配置",
+    "items": [
+      {
+        "type": "select",
+        "field": "llm_base_url",
+        "label": "大模型服务",
+        "required": false,
+        "initValue": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "options": [
+          { "label": "通义千问（百炼·DashScope 通用域名）", "value": "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+          { "label": "豆包（火山方舟）", "value": "https://ark.cn-beijing.volces.com/api/v3" }
+        ],
+        "tips": "DashScope 通用域名兼容所有业务空间，但阿里云官方自 2026-09-30 起该域名不再支持新特性；若你在百炼控制台有业务空间专属地址（形如 https://llm-xxxx.cn-beijing.maas.aliyuncs.com），请在下一项直接粘贴，会自动优先使用"
+      },
+      {
+        "type": "text",
+        "field": "llm_base_url_custom",
+        "label": "业务空间专属域名（推荐，可留空）",
+        "required": false,
+        "initValue": "",
+        "tips": "在百炼控制台创建 API Key 后的弹窗里复制「API Host」，粘贴到此处。格式 https://{WorkspaceId}.{地域}.maas.aliyuncs.com/compatible-mode/v1（北京 cn-beijing / 新加坡 ap-southeast-1 / 中国香港 cn-hongkong）。优势：仅访问当前业务空间、并发承载更高、请求超时 3600 秒。留空则使用上方所选服务的默认地址"
+      },
+      {
+        "type": "text",
+        "field": "llm_model",
+        "label": "模型名称",
+        "required": false,
+        "initValue": "qwen3-vl-plus",
+        "tips": "周报识别需模型支持图像输入 + JSON 结构化输出。推荐 qwen3-vl-plus（均衡，首选）；截图清晰可选 qwen3-vl-flash（更快更省）；版式复杂或文字模糊建议 qwen3.8-flash 或 qwen3.7-plus。豆包请填你的 endpoint id（ep-xxxx）。安装后可在「设置 → 应用配置」中随时修改"
+      },
+      {
+        "type": "password",
+        "field": "llm_api_key",
+        "label": "大模型 API Key",
+        "required": false,
+        "initValue": "",
+        "tips": "你自行申请的大模型 API Key（T13：用户自带），用于任务截图识别；留空时识别功能不可用，其余功能不受影响"
+      },
+      {
+        "type": "text",
+        "field": "llm_note",
+        "label": "补充说明",
+        "required": false,
+        "initValue": "",
+        "tips": "识别完全在你自己的账号下调用，Key 仅存储在本 NAS，不上传任何第三方；识别费用由你的模型服务商按量计费。安装后可在「设置 → 应用配置」中修改，并可为不同模块分别指定模型。"
+      }
+    ]
+  }
+]

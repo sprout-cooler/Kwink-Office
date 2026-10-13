@@ -1,0 +1,12 @@
+appname=omnioffice
+version=1.0.18
+display_name=全能办公室
+desc=统一的工作入口：把分散在各系统的工作内容收拢到一处。内置周报模块，并支持后续扩展更多办公模块。
+source=thirdparty
+platform=all
+maintainer=Your Name
+desktop_uidir=ui
+desktop_applaunchname=omnioffice.main
+os_min_version=1.1.3100
+ctl_stop=true
+checkport=false

@@ -1,0 +1,4 @@
+#!/bin/bash
+# 卸载完成回调（fnpack 强制要求）。容器与镜像由平台回收；数据目录保留（S7 行为记录项）。
+echo "omnioffice uninstall_callback: done" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+exit 0

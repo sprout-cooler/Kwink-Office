@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "omnioffice.main": {
+      "title": "全能办公室",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/omnioffice",
+      "gatewaySocket": "app.sock",
+      "url": "/app/omnioffice",
+      "allUsers": true
+    }
+  }
+}

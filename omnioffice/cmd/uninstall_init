@@ -1,0 +1,5 @@
+#!/bin/bash
+# 卸载前回调（fnpack 强制要求）。
+# 红线：共享目录 ${TRIM_APPDEST}/share 为用户数据，卸载流程不得删除（V10 数据保留要求）。
+echo "omnioffice uninstall_init: keeping user data under share/" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+exit 0
