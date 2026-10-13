@@ -166,8 +166,40 @@ export interface TemplateItem {
   anchorOk: boolean;
   note: string;
   createdAt: string | null;
+  /** 最近一次变更时间（回滚等操作会写入） */
+  updatedAt?: string | null;
   /** 是否为当前批次绑定的模板版本 */
   bound?: boolean;
+}
+
+/** 模板版本差异项 */
+export interface TemplateDiffItem {
+  sheet: string;
+  cell: string;
+  kind: "changed" | "added" | "removed" | "sheet_added" | "sheet_removed";
+  left: string;
+  right: string;
+}
+
+export interface TemplateDiff {
+  base: TemplateItem;
+  target: TemplateItem;
+  changes: TemplateDiffItem[];
+  total: number;
+  truncated: boolean;
+  limit: number;
+}
+
+/** 导出历史条目（比本批次产物列表多了模板版本与周期信息） */
+export interface ExportHistoryItem extends ArtifactItem {
+  templateId: number | null;
+  templateVersion: number | null;
+  templateFilename: string;
+  reportId: number | null;
+  periodStart: string;
+  xlsxSize: number;
+  pngCount: number;
+  updatedAt: string | null;
 }
 
 export interface ArtifactItem {
@@ -427,6 +459,52 @@ export const weeklyApi = {
 
   async removeTemplate(id: number): Promise<void> {
     await api(`/weekly-report/templates/${id}`, { method: "DELETE" });
+  },
+
+  /* ---- 模板版本：差异对比与回滚 ---- */
+
+  /** 对比两个版本；base=参照版（通常是旧的），target=对比版（通常是新的） */
+  async diffTemplates(baseId: number, targetId: number): Promise<TemplateDiff> {
+    return api<TemplateDiff>(`/weekly-report/templates/${baseId}/diff/${targetId}`);
+  },
+
+  /** 回滚到指定版本：从旧版派生一个新版本并绑定到当前批次，历史版本全部保留 */
+  async rollbackTemplate(
+    id: number,
+    note = "",
+  ): Promise<{ template: TemplateItem; sourceVersion: number; bound: boolean }> {
+    return api(`/weekly-report/templates/${id}/rollback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    });
+  },
+
+  /* ---- 导出历史（跨批次） ---- */
+
+  async exportHistory(opts?: {
+    q?: string;
+    templateId?: number | null;
+    limit?: number;
+  }): Promise<ExportHistoryItem[]> {
+    const p = new URLSearchParams();
+    if (opts?.q) p.set("q", opts.q);
+    if (opts?.templateId) p.set("templateId", String(opts.templateId));
+    p.set("limit", String(opts?.limit ?? 200));
+    const r = await api<{ items: ExportHistoryItem[] }>(`/weekly-report/export-history?${p}`);
+    return r.items;
+  },
+
+  async renameArtifact(id: number, name: string): Promise<{ item: ExportHistoryItem; filesRenamed: boolean }> {
+    return api(`/weekly-report/artifacts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  async deleteArtifact(id: number): Promise<{ ok: boolean; filesRemoved: number; dirRemoved: boolean }> {
+    return api(`/weekly-report/artifacts/${id}`, { method: "DELETE" });
   },
 
   async runExport(opts: { scope: "content" | "full"; dpi: number; renderPng: boolean }): Promise<ExportOutcome> {

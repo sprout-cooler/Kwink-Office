@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -158,6 +158,7 @@ def _template_dto(t: TemplateVersion) -> dict:
         "anchorOk": bool(t.anchor_ok),
         "note": t.note,
         "createdAt": t.created_at.isoformat() if t.created_at else None,
+        "updatedAt": t.updated_at.isoformat() if t.updated_at else None,
     }
 
 
@@ -781,6 +782,310 @@ def list_artifacts(db: Session, identity: Identity, report: Report) -> list[dict
             }
         )
     return out
+
+
+# 差异对比的输出上限：模板通常是几 KB 的结构化表格，但防御「两个完全不同的工作簿」
+# 造成前端一次渲染上万行 —— 超限就截断并如实告知。
+MAX_DIFF_ROWS = 300
+MAX_DIFF_SCAN_ROWS = 400
+MAX_DIFF_SCAN_COLS = 40
+
+
+def diff_templates(db: Session, identity: Identity, base_id: int, target_id: int) -> dict:
+    """对比两个模板版本的单元格差异。
+
+    base 为参照版本（通常选旧的），target 为对比版本（通常是新的），
+    输出语义是「从 base 到 target 发生了什么变化」，符合「看这一版改了啥」的直觉。
+
+    识别三类差异：单元格内容变化（changed）、target 新增内容（added）、
+    target 删掉的内容（removed）；工作表级别的增删单列(kind="sheet")。
+    """
+    base = _owned_template(db, identity, base_id)
+    target = _owned_template(db, identity, target_id)
+    base_path = _assert_template_file(db, base)
+    target_path = _assert_template_file(db, target)
+
+    try:
+        wb_a = load_workbook(base_path)
+        wb_b = load_workbook(target_path)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "BAD_XLSX", "message": f"模板文件无法解析：{type(e).__name__}: {e}"},
+        ) from None
+
+    changes: list[dict] = []
+    truncated = False
+    total = 0
+    sheets_a = set(wb_a.sheetnames)
+    sheets_b = set(wb_b.sheetnames)
+
+    for name in sorted(sheets_a - sheets_b):
+        total += 1
+        if len(changes) < MAX_DIFF_ROWS:
+            changes.append({"sheet": name, "cell": "", "kind": "sheet_removed", "left": "有该工作表", "right": ""})
+    for name in sorted(sheets_b - sheets_a):
+        total += 1
+        if len(changes) < MAX_DIFF_ROWS:
+            changes.append({"sheet": name, "cell": "", "kind": "sheet_added", "left": "", "right": "新增该工作表"})
+
+    for name in sorted(sheets_a & sheets_b):
+        if truncated:
+            break
+        ws_a = wb_a[name]
+        ws_b = wb_b[name]
+        cells_a = _sheet_cell_map(ws_a)
+        cells_b = _sheet_cell_map(ws_b)
+        for coord in sorted(set(cells_a) | set(cells_b)):
+            va, vb = cells_a.get(coord), cells_b.get(coord)
+            if va == vb:
+                continue
+            total += 1
+            if len(changes) >= MAX_DIFF_ROWS:
+                truncated = True
+                continue
+            if va is None:
+                kind = "added"
+            elif vb is None:
+                kind = "removed"
+            else:
+                kind = "changed"
+            changes.append(
+                {
+                    "sheet": name,
+                    "cell": coord,
+                    "kind": kind,
+                    "left": va or "",
+                    "right": vb or "",
+                }
+            )
+
+    return {
+        "base": _template_dto(base),
+        "target": _template_dto(target),
+        "changes": changes,
+        "total": total,
+        "truncated": truncated,
+        "limit": MAX_DIFF_ROWS,
+    }
+
+
+def _sheet_cell_map(ws) -> dict[str, str]:
+    """把工作表里有内容的单元格摊平成 {坐标: 显示文本}。
+
+    上限扫描：超大工作表（几万行）不可能逐个比，模板通常 A1:F26，
+    400×40 足够覆盖；超出部分会被截断标记掩盖，不静默丢一半结果。
+    """
+    out: dict[str, str] = {}
+    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, MAX_DIFF_SCAN_ROWS),
+                            max_col=min(ws.max_column, MAX_DIFF_SCAN_COLS)):
+        for cell in row:
+            if cell.value in (None, ""):
+                continue
+            out[cell.coordinate] = str(cell.value)[:200]
+    return out
+
+
+def rollback_template(
+    db: Session, identity: Identity, report: Report, target_id: int, note: str = ""
+) -> dict:
+    """回滚到指定模板版本。
+
+    关键取舍：**生成新版本而不是删除历史**。
+    若把「回滚」实现为把版本指针改回旧版（或直接删掉中间版本），一旦用户发现
+    回滚错了就再也回不去。这里从旧版内容派生出一个**新的最高版本**，
+    历史链条完整保留，代价只是多一条版本记录。
+    """
+    src = _owned_template(db, identity, target_id)
+    src_path = _assert_template_file(db, src)
+    data = Path(src_path).read_bytes()
+    md5 = hashlib.md5(data).hexdigest()
+
+    stored = templates_root() / f"{md5}.xlsx"
+    if not stored.exists():
+        stored.write_bytes(data)
+
+    count = len(
+        list(db.scalars(select(TemplateVersion).where(TemplateVersion.owner_uid == identity.uid)))
+    )
+    row = TemplateVersion(
+        owner_uid=identity.uid,
+        filename=src.filename,
+        stored_path=str(stored),
+        md5=md5,
+        size=len(data),
+        version=count + 1,
+        anchor_ok=1,
+        note=(note or f"回滚自 v{src.version}")[:255],
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    bound = False
+    if report is not None:
+        report.template_id = row.id
+        db.commit()
+        bound = True
+
+    audit.log(
+        "template.rollback",
+        identity.uid,
+        {"fromVersion": src.version, "toVersion": row.version, "templateId": row.id},
+    )
+    return {"template": _template_dto(row), "sourceVersion": src.version, "bound": bound}
+
+
+# ---------------------------------------------------------------- 导出历史管理
+
+
+def _artifact_dto(db: Session, a: ExportArtifact) -> dict:
+    """导出记录视图：文件名 / 导出时间 / 所用模板及版本 / 产物是否还在。"""
+    xp = Path(a.xlsx_path) if a.xlsx_path else None
+    pngs = [Path(p) for p in (a.png_paths or [])]
+    size = 0
+    if xp is not None and xp.is_file():
+        try:
+            size = xp.stat().st_size
+        except OSError:
+            size = 0
+
+    tpl = db.get(TemplateVersion, a.template_id) if a.template_id else None
+    # 模板可能已被别的操作清理；且必须同属一个账号，否则视为「模板信息不可用」
+    if tpl is not None and tpl.owner_uid != a.owner_uid:
+        tpl = None
+    report = db.get(Report, a.report_id) if a.report_id else None
+
+    return {
+        "id": a.id,
+        "name": a.name,
+        "scope": a.scope,
+        "dpi": a.dpi,
+        "taskCount": a.task_count,
+        "status": a.status,
+        "error": a.error,
+        "xlsx": xp.name if xp else "",
+        "xlsxExists": bool(xp and xp.is_file()),
+        "xlsxSize": size,
+        "pngs": [p.name for p in pngs],
+        "pngCount": len(pngs),
+        "templateId": tpl.id if tpl else None,
+        "templateVersion": tpl.version if tpl else None,
+        "templateFilename": tpl.filename if tpl else "",
+        "reportId": a.report_id,
+        "periodStart": report.period_start if report else "",
+        "createdAt": a.created_at.isoformat() if a.created_at else None,
+        "updatedAt": a.updated_at.isoformat() if a.updated_at else None,
+    }
+
+
+def _owned_artifact(db: Session, identity: Identity, artifact_id: int) -> ExportArtifact:
+    art = db.get(ExportArtifact, artifact_id)
+    if art is None or art.owner_uid != identity.uid:
+        raise HTTPException(status_code=404, detail={"error": "NOT_FOUND", "message": "导出记录不存在"})
+    return art
+
+
+def list_export_history(
+    db: Session, identity: Identity, q: str = "", template_id: int | None = None, limit: int = 200
+) -> list[dict]:
+    """全部导出历史（跨周报批次），可按文件名搜索 / 按模板版本筛选。
+
+    与 list_artifacts 的区别：那个只看「当前批次」，这里回答
+    「我上周那份周报叫什么名字、用的哪个版本」，是历史管理的主视图。
+    """
+    stmt = select(ExportArtifact).where(ExportArtifact.owner_uid == identity.uid)
+    kw = (q or "").strip()
+    if kw:
+        stmt = stmt.where(ExportArtifact.name.like(f"%{kw}%"))
+    if template_id:
+        stmt = stmt.where(ExportArtifact.template_id == template_id)
+    rows = db.scalars(stmt.order_by(ExportArtifact.id.desc()).limit(max(1, min(int(limit), 500))))
+    return [_artifact_dto(db, a) for a in rows]
+
+
+def rename_artifact(db: Session, identity: Identity, artifact_id: int, new_name: str) -> dict:
+    """重命名导出记录（同步重命名共享目录里的文件，让文件名与记录保持一致）。
+
+    为什么连文件一起改名：记录名改了而文件还叫旧名，用户去文件管理器找会找不到，
+    下载时 FileResponse 也会用磁盘上的旧文件名 —— 等于改名没生效。
+    文件改名失败（被占用 / 目录被外部抢占）不回滚记录改名，如实回报 filesRenamed=false。
+    """
+    art = _owned_artifact(db, identity, artifact_id)
+    clean = _safe_name(new_name, art.name)
+    if not clean:
+        raise HTTPException(status_code=400, detail={"error": "BAD_NAME", "message": "名称无效（不能为空或只含符号）"})
+    if clean == art.name:
+        return {"item": _artifact_dto(db, art), "filesRenamed": False, "unchanged": True}
+
+    old_name = art.name
+    old_dir = Path(art.xlsx_path).parent if art.xlsx_path else None
+    files_renamed = _rename_artifact_files(old_dir, old_name, clean)
+
+    if files_renamed:
+        cand_xlsx = old_dir.parent / clean / f"{clean}.xlsx"
+        art.xlsx_path = str(cand_xlsx)
+        png_dir = cand_xlsx.parent
+        pngs = sorted(str(p) for p in png_dir.glob(f"{clean}*.png")) if png_dir.is_dir() else []
+        art.png_paths = pngs
+    art.name = clean
+    art.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    audit.log("export.rename", identity.uid, {"artifactId": art.id, "from": old_name, "to": clean})
+    return {"item": _artifact_dto(db, art), "filesRenamed": files_renamed, "unchanged": False}
+
+
+def _rename_artifact_files(old_dir: Path | None, old_name: str, new_name: str) -> bool:
+    """共享目录里的导出目录与文件整体改名；失败返回 False（记录改名仍然生效）。"""
+    if old_dir is None or not old_dir.is_dir() or not old_dir.parent:
+        return False  # 文件已被清理，只改记录名
+    new_dir = old_dir.parent / new_name
+    if new_dir.exists() and new_dir != old_dir:
+        return False  # 目标名已存在：不动目录，避免覆盖别人的产物
+    try:
+        if new_dir != old_dir:
+            shutil.move(str(old_dir), str(new_dir))
+        for f in sorted(new_dir.iterdir()):
+            if f.name.startswith(old_name):
+                f.rename(new_dir / (new_name + f.name[len(old_name):]))
+        return True
+    except OSError as e:
+        print(f"[export] 导出文件改名失败 {old_dir} -> {new_dir}: {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+def delete_artifact(db: Session, identity: Identity, artifact_id: int) -> dict:
+    """删除导出记录并清理共享目录里的产物文件。
+
+    文件已被外部清理（410 场景）也要能把记录删掉 —— 否则用户永远删不掉
+    一条「文件已丢失」的历史记录。
+    """
+    art = _owned_artifact(db, identity, artifact_id)
+    paths = [Path(art.xlsx_path)] if art.xlsx_path else []
+    paths += [Path(p) for p in (art.png_paths or [])]
+    removed = 0
+    parent: Path | None = None
+    for p in paths:
+        if p.is_file():
+            parent = p.parent
+            try:
+                p.unlink()
+                removed += 1
+            except OSError as e:
+                print(f"[export] 删除产物文件失败 {p}: {type(e).__name__}: {e}", flush=True)
+    dir_removed = False
+    if parent is not None and parent.is_dir():
+        try:
+            if not any(parent.iterdir()):
+                parent.rmdir()
+                dir_removed = True
+        except OSError:
+            pass
+    db.delete(art)
+    db.commit()
+    audit.log("export.delete", identity.uid, {"artifactId": artifact_id, "files": removed})
+    return {"ok": True, "filesRemoved": removed, "dirRemoved": dir_removed}
 
 
 # ---------------------------------------------------------------- 渲染链

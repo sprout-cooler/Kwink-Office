@@ -7,11 +7,15 @@ import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   weeklyApi,
-  artifactUrl,
   type ArtifactItem,
   type ExportReadiness,
   type TemplateItem,
 } from "@/api/weekly-report";
+import TemplateVersionDialog from "./TemplateVersionDialog.vue";
+import ExportHistoryPanel from "./ExportHistoryPanel.vue";
+
+const versionDialog = ref(false);
+const historyRef = ref<InstanceType<typeof ExportHistoryPanel> | null>(null);
 
 const loading = ref(false);
 const exporting = ref(false);
@@ -127,6 +131,7 @@ async function doExport() {
       ElMessage.warning(`xlsx 已导出，但截图未生成：${r.error || "渲染链不可用"}`);
     }
     await refreshAll();
+    await historyRef.value?.refresh();
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
     // 卡点类错误可能带来新的阻断项，刷新一次
@@ -140,11 +145,11 @@ function fmtSize(n: number): string {
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`;
 }
 
-const STATUS_TAG: Record<string, { type: "success" | "warning" | "danger"; label: string }> = {
-  ok: { type: "success", label: "完整" },
-  partial: { type: "warning", label: "部分" },
-  failed: { type: "danger", label: "失败" },
-};
+/** 版本回滚后要同时刷新这里的模板列表与下方导出历史 */
+async function onVersionChanged() {
+  await refreshAll();
+  await historyRef.value?.refresh();
+}
 </script>
 
 <template>
@@ -176,6 +181,7 @@ const STATUS_TAG: Record<string, { type: "success" | "warning" | "danger"; label
           />
         </el-select>
         <el-tag v-if="bound" type="success" effect="plain">当前绑定 v{{ bound.version }}</el-tag>
+        <el-button size="small" @click="versionDialog = true">版本管理 / 对比 / 回滚</el-button>
       </div>
 
       <el-table v-if="templates.length" :data="templates" size="small" border class="tpl-tbl">
@@ -205,6 +211,8 @@ const STATUS_TAG: Record<string, { type: "success" | "warning" | "danger"; label
       </el-table>
       <el-empty v-else description="尚未上传模板 —— 导出需要先上传周报模板文件" :image-size="70" />
     </el-card>
+
+    <TemplateVersionDialog v-model="versionDialog" :templates="templates" @changed="onVersionChanged" />
 
     <!-- 2. 导出前检查 -->
     <el-card shadow="never" class="blk">
@@ -289,55 +297,18 @@ const STATUS_TAG: Record<string, { type: "success" | "warning" | "danger"; label
       </el-form>
     </el-card>
 
-    <!-- 4. 产物列表 -->
+    <!-- 4. 导出历史（跨批次全量：文件名 / 导出时间 / 所用模板及版本 / 下载 · 重命名 · 删除） -->
     <el-card shadow="never" class="blk">
       <template #header>
         <div class="card-head">
-          <b>4. 导出记录</b>
-          <span class="card-sub">文件同时落在 NAS 共享目录「omnioffice/exports」，可直接在文件管理器取用</span>
+          <b>4. 导出历史</b>
+          <span class="card-sub">
+            包含所有周报批次的导出记录；文件同时落在 NAS 共享目录「omnioffice/exports」
+          </span>
         </div>
       </template>
 
-      <el-empty v-if="artifacts.length === 0" description="还没有导出记录" :image-size="70" />
-      <div v-else class="art-list">
-        <div v-for="a in artifacts" :key="a.id" class="art">
-          <div class="art-head">
-            <span class="art-name">{{ a.name }}</span>
-            <el-tag size="small" :type="STATUS_TAG[a.status].type" effect="plain">
-              {{ STATUS_TAG[a.status].label }}
-            </el-tag>
-            <el-tag size="small" type="info" effect="plain">
-              {{ a.scope === 'content' ? '口径一' : '口径二' }} · {{ a.taskCount }} 条
-            </el-tag>
-            <span class="art-time">{{ a.createdAt?.slice(0, 16).replace('T', ' ') }}</span>
-          </div>
-          <div class="art-files">
-            <a v-if="a.xlsxExists" :href="artifactUrl(a.id, 'xlsx')" class="file-link" target="_blank">
-              📄 {{ a.xlsx }}
-            </a>
-            <span v-else class="file-gone">📄 {{ a.xlsx }}（文件已清理）</span>
-            <a
-              v-for="(p, i) in a.pngs"
-              :key="p"
-              :href="artifactUrl(a.id, 'png', i)"
-              class="file-link"
-              target="_blank"
-            >
-              🖼 {{ p }}
-            </a>
-          </div>
-          <el-alert v-if="a.error" type="warning" :closable="false" class="art-err">
-            {{ a.error }}
-          </el-alert>
-          <el-image
-            v-if="a.pngs.length"
-            :src="artifactUrl(a.id, 'png', 0)"
-            :preview-src-list="a.pngs.map((_, i) => artifactUrl(a.id, 'png', i))"
-            fit="contain"
-            class="art-preview"
-          />
-        </div>
-      </div>
+      <ExportHistoryPanel ref="historyRef" />
     </el-card>
   </div>
 </template>

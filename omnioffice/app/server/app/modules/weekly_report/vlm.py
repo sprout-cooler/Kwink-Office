@@ -285,18 +285,20 @@ class OpenAICompatibleRecognizer:
             raise RecognizeError(f"无法连接识别服务：{type(e).__name__}: {e}") from None
 
 
-def build_recognizer(module: str | None = None):
+def build_recognizer(module: str | None = None, owner: str = ""):
     """按配置实例化识别器；未配置 Key 时返回 None（状态接口如实上报）。
 
-    配置来源优先级：模块覆盖 > 全局默认 > 环境变量(wizard) > 内置兜底（见 settings_service.resolve_ai）。
+    配置来源优先级：账号私有 > 全局 > 环境变量(wizard) > 内置兜底（见 settings_service.resolve_ai）。
     每次调用都读库 —— 用户在设置页改完 Key 立即生效，不需要重启容器。
+
+    owner 为当前账号的数据归属键：不同账号各用自己的 Key/模型，互不影响。
     """
     from ...db.session import SessionLocal
     from ...core.settings_service import resolve_ai
 
     db = SessionLocal()
     try:
-        cfg = resolve_ai(db, module)
+        cfg = resolve_ai(db, module, owner=owner)
     finally:
         db.close()
 

@@ -6,7 +6,7 @@
  *
  * api_key 只写不读：后端永不回传明文，前端只保存用户本次输入的值用于提交。
  */
-import { api } from "./client";
+import { api, API_BASE } from "./client";
 
 export interface AiConfig {
   base_url: string;
@@ -118,4 +118,33 @@ export const settingsApi = {
       body: JSON.stringify(payload),
     });
   },
+
+  /** 导出当前账号的应用配置为 JSON 文件下载（默认不含 API Key） */
+  exportUrl(includeSecrets = false): string {
+    return `${API_BASE}/settings/export${includeSecrets ? "?includeSecrets=1" : ""}`;
+  },
+
+  /** 导入配置文件恢复当前账号配置；空值字段表示「不改」，不会清空现有配置 */
+  async importConfig(payload: unknown): Promise<{
+    ok: boolean;
+    applied: { app: string[]; ai_default: string[]; ai_modules: string[] };
+    skipped: string[];
+    settings: SettingsPayload;
+  }> {
+    return api("/settings/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
 };
+
+/** 触发配置文件下载（用隐藏 a 标签，链接点击即可带上 Cookie 会话） */
+export function downloadSettingsFile(includeSecrets = false): void {
+  const a = document.createElement("a");
+  a.href = settingsApi.exportUrl(includeSecrets);
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}

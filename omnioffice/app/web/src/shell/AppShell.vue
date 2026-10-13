@@ -17,6 +17,18 @@ const activePanel = computed(() => panels[store.activeModuleId] ?? null);
 
 // A 层通用功能候选（V10 2.4 待定）：占位入口，不影响 B/C/D 结构
 const aActions = ["搜索", "消息", "新建", "帮助"];
+
+/** 退出应用账号（NAS 登录态不动，退回选账号界面） */
+const loggingOut = ref(false);
+async function onLogout() {
+  if (loggingOut.value) return;
+  loggingOut.value = true;
+  try {
+    await store.logout();
+  } finally {
+    loggingOut.value = false;
+  }
+}
 </script>
 
 <template>
@@ -24,9 +36,14 @@ const aActions = ["搜索", "消息", "新建", "帮助"];
     <!-- 左侧通高竖栏：自顶到底，与 A 层不重叠（V10 2.3 竖栏通高） -->
     <aside class="oo-side" :class="{ collapsed }">
       <div class="oo-side-top">
-        <el-avatar :size="36">{{ store.identity?.username?.slice(0, 1) ?? "?" }}</el-avatar>
+        <el-tooltip :content="store.displayName" placement="right">
+          <el-avatar :size="36">{{ store.displayName.slice(0, 1) }}</el-avatar>
+        </el-tooltip>
         <el-tooltip v-if="!collapsed" content="设置" placement="right">
           <button class="oo-settings" aria-label="设置" @click="settingsOpen = true">⚙</button>
+        </el-tooltip>
+        <el-tooltip v-if="!collapsed" content="退出当前账号" placement="right">
+          <button class="oo-settings" aria-label="退出" @click="onLogout">⏻</button>
         </el-tooltip>
       </div>
       <!-- B 模块导航栏：数据来自模块注册表 -->

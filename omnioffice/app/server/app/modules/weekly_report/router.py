@@ -306,6 +306,34 @@ def get_template(
     return {"template": {"id": t.id, "filename": t.filename, "version": t.version, "size": t.size}}
 
 
+@router.get("/templates/{base_id}/diff/{target_id}")
+def diff_templates(
+    base_id: int,
+    target_id: int,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """对比两个模板版本的单元格差异（base=参照版，target=对比版）。
+
+    路径用 /diff/ 而非查询串，是为了避开与 GET /templates/{template_id} 的路由歧义
+    （否则 "diff" 会被当模板 id 解析，直接 422）。
+    """
+    return export_service.diff_templates(db, identity, base_id, target_id)
+
+
+@router.post("/templates/{template_id}/rollback")
+def rollback_template(
+    template_id: int,
+    body: dict | None = None,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """回滚到指定模板版本 —— 从旧版派生新版本（保留全部历史），并绑定到当前批次。"""
+    report = service.get_or_create_current_report(db, identity)
+    note = str((body or {}).get("note") or "")
+    return export_service.rollback_template(db, identity, report, template_id, note)
+
+
 @router.delete("/templates/{template_id}")
 def delete_template(
     template_id: int,
@@ -373,6 +401,42 @@ def trigger_export(
     }
 
 
+@router.get("/export-history")
+def export_history(
+    q: str = "",
+    templateId: int | None = None,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """全部导出历史（跨批次）：文件名 / 导出时间 / 所用模板及版本 / 下载与删除。"""
+    return {"items": export_service.list_export_history(db, identity, q, templateId, limit)}
+
+
+@router.patch("/artifacts/{artifact_id}")
+def rename_artifact(
+    artifact_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """重命名导出记录（同步改共享目录里的文件名）。"""
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail={"error": "MISSING_FIELD", "message": "缺少 name"})
+    return export_service.rename_artifact(db, identity, artifact_id, name)
+
+
+@router.delete("/artifacts/{artifact_id}")
+def delete_artifact(
+    artifact_id: int,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """删除导出记录与其产物文件（文件已被外部清理时也能删掉记录）。"""
+    return export_service.delete_artifact(db, identity, artifact_id)
+
+
 @router.get("/artifacts")
 def list_artifacts(
     db: Session = Depends(get_db),
@@ -430,7 +494,7 @@ def recognize_status(db: Session = Depends(get_db), identity: Identity = Depends
     for status, cnt in rows:
         counts[status] = counts.get(status, 0) + cnt
     return {
-        "configured": build_recognizer(MODULE_ID) is not None,
+        "configured": build_recognizer(MODULE_ID, owner=identity.uid) is not None,
         "providers": PROVIDER_PRESETS,
         "counts": counts,
         "total": sum(counts.values()),
@@ -451,14 +515,14 @@ def trigger_recognize(
     if body and isinstance(body.get("ids"), list) and body["ids"]:
         stmt = stmt.where(Screenshot.id.in_([int(i) for i in body["ids"]]))
     ids = [s.id for s in db.scalars(stmt)]
-    enqueued = recognize_queue.enqueue(ids)
+    enqueued = recognize_queue.enqueue(ids, identity.uid)
     return {"enqueued": enqueued, "pending": len(ids)}
 
 
 @router.post("/recognize/retry-failed")
 def retry_failed(db: Session = Depends(get_db), identity: Identity = Depends(_require_identity)):
     ids = recognize_queue.retry_failed(db, identity.uid)
-    enqueued = recognize_queue.enqueue(ids)
+    enqueued = recognize_queue.enqueue(ids, identity.uid)
     return {"enqueued": enqueued}
 
 

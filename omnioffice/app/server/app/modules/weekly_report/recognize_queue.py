@@ -37,6 +37,9 @@ _workers: list[threading.Thread] = []
 # 当前批次的进度计数（简单内存态，够用；重启后按库中状态重建）
 _pending_ids: set[int] = set()
 _pending_lock = threading.Lock()
+# 每个任务所属的账号隔离键 —— AI 配置按账号独立，worker 必须知道这张图是谁的。
+# 之前这里直接 build_recognizer(MODULE_ID) 不带 owner，多账号下会用错 Key。
+_job_owners: dict[int, str] = {}
 
 
 def attach_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -102,11 +105,16 @@ def stop_workers() -> None:
         _jobs.put(None)
 
 
-def enqueue(screenshot_ids: list[int]) -> int:
-    """入队 pending 截图；返回实际入队数。"""
+def enqueue(screenshot_ids: list[int], owner: str = "") -> int:
+    """入队 pending 截图；返回实际入队数。
+
+    owner 为该批截图所属账号的数据归属键，worker 据此取该账号自己的 AI 配置。
+    """
     with _pending_lock:
         new_ids = [sid for sid in screenshot_ids if sid not in _pending_ids]
         _pending_ids.update(new_ids)
+        for sid in new_ids:
+            _job_owners[sid] = owner
     for sid in new_ids:
         _jobs.put(sid)
     return len(new_ids)
@@ -124,6 +132,7 @@ def _worker_loop() -> None:  # 独立线程：每张图用新会话，互不串�
         finally:
             with _pending_lock:
                 _pending_ids.discard(sid)
+                _job_owners.pop(sid, None)
 
 
 def _process_one(sid: int) -> None:
@@ -137,7 +146,7 @@ def _process_one(sid: int) -> None:
             return
 
         # 每张图重新解析配置：设置页改完 Key/模型立即生效，无需重启
-        recognizer = build_recognizer(MODULE_ID)
+        recognizer = build_recognizer(MODULE_ID, owner=uid)
         if recognizer is None:
             _fail_locked(
                 db, shot, uid,

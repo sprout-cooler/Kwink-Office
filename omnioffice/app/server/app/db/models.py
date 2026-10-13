@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .session import Base
@@ -133,6 +133,8 @@ class TemplateVersion(Base):
     anchor_ok: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     note: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # 最后更新时间（回滚等操作会写入）；可空 —— 升级前的老记录没有该列
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ExportArtifact(Base):
@@ -164,5 +166,82 @@ class ExportArtifact(Base):
     status: Mapped[str] = mapped_column(String(16), default="ok", nullable=False)
     error: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # 重命名时间（导出经历史重命名会写入）；可空 —— 升级前的老记录没有该列
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     report: Mapped[Report] = relationship("Report")
+
+
+# ================================================================ 账号与数据隔离
+
+
+class User(Base):
+    """应用账号（注册登录 + 数据归属）。
+
+    设计要点：
+    - **data_key 是隔离的根**：全项目所有业务表用 owner_uid 隔离，而 owner_uid
+      来自 Identity.uid；登录后把 Identity.uid 换成该账号的 data_key，
+      所有业务逻辑自动按账号隔离，无需逐表改造。
+    - **首个账号继承 NAS 账号的历史数据**：同一个 NAS 账号下创建的第一个应用账号，
+      data_key 直接取 NAS 的 uid（如 "1000"）——这样升级前已有的周报/模板/导出记录
+      仍然可见，不会出现「升级后数据不见了」。此后注册的账号用独立随机 key，
+      彼此完全隔离。
+    - **账号不跨 NAS 用户**：nas_uid 随网关 X-Trim-Userid 注入（不可伪造），
+      登录时校验会话所属 nas_uid 与当前 NAS 身份一致，防止跨账号复用会话。
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("nas_uid", "username", name="uq_users_nas_username"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 登录名（同一 NAS 账号下唯一）
+    username: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    # pbkdf2_hmac('sha256', password, salt, N).hex()
+    password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    salt: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 归属的 NAS 账号 uid（网关注入，客户端不可伪造）
+    nas_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # 数据隔离键：写入所有业务表的 owner_uid
+    data_key: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    is_admin: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    disabled: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AuthSession(Base):
+    """登录会话（服务端签发 token → 写入 Cookie）。
+
+    为什么不沿用 NAS 网关会话：网关只证明「是这台 NAS 的某个已登录用户」，
+    无法区分应用内的多个账号。这里在网关身份之上再加一层应用会话，
+    网关的身份红线（只看 X-Trim-* 头）不受影响。
+    """
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    user_agent: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+
+
+class UserSetting(Base):
+    """按账号隔离的应用配置（owner_uid + key）。
+
+    为什么不改原 settings 表：settings.key 是全局唯一约束，改成 (owner, key)
+    需要改约束 → 现存库无法平滑升级（迁移脚本只补列，不改约束）。
+    新增本表是**纯增量**：读的时候先查用户私有值，没有再回落到全局 settings
+    （保留安装向导注入的默认值作为新账号起点），写入一律写私有。
+    """
+
+    __tablename__ = "user_settings"
+    __table_args__ = (UniqueConstraint("owner_uid", "key", name="uq_user_settings_owner_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    key: Mapped[str] = mapped_column(String(160), index=True, nullable=False)
+    value: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

@@ -22,6 +22,10 @@ class Settings:
     app_version: str = os.environ.get("APP_VERSION", "1.0.0")
     # 身份来源：gateway=网关 X-Trim-* 头（真机/假网关）；mock=本地开发固定身份
     identity_mode: str = os.environ.get("IDENTITY_MODE", "gateway")
+    # 应用账号登录是否为必需（APP_AUTH_REQUIRED=0 时退回「只有网关身份」的旧行为）。
+    # 逃生开关：万一某个部署环境出现会话 Cookie 无法传递（罕见反向代理/自定义网关），
+    # 设成 0 即可回到升级前的形态，不必回滚版本。IDENTITY_MODE=mock 时本项自动失效。
+    app_auth_required: bool = field(default_factory=lambda: _bool(os.environ.get("APP_AUTH_REQUIRED", "1")))
     # 数据库：真机由 Compose 注入 PostgreSQL；本地未注入时回退 SQLite（DATA_DIR 下）
     database_url: str = field(default_factory=lambda: os.environ.get("DATABASE_URL", ""))
     # 上传约束（V10 3.10）

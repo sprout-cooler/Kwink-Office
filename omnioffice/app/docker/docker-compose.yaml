@@ -13,7 +13,7 @@ services:
       - GATEWAY_PREFIX=/app/omnioffice
       - SOCKET_PATH=/host/app.sock
       - DATA_DIR=/data
-      - APP_VERSION=${APP_VERSION:-1.0.20}
+      - APP_VERSION=${APP_VERSION:-1.0.21}
       - DATABASE_URL=postgresql://omnioffice:omnioffice@postgres:5432/omnioffice
       - REDIS_URL=redis://redis:6379/0
       - LLM_API_KEY=${llm_api_key}

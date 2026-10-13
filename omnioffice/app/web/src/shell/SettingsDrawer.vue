@@ -3,8 +3,8 @@
 // 分类设计：通用设置 / AI 模型（全局默认）/ 各模块独立 AI ——
 // 后续新增模块只需在模块注册表登记，这里自动出现该模块的配置项，无需改前端。
 import { onMounted, ref, watch } from "vue";
-import { ElDrawer, ElTabs, ElTabPane, ElCard, ElDescriptions, ElDescriptionsItem, ElTag, ElMessage, ElMessageBox, ElForm, ElFormItem, ElInputNumber, ElCollapse, ElCollapseItem, ElBadge } from "element-plus";
-import { settingsApi, type SettingsPayload, type AppSettingMeta } from "@/api/settings";
+import { ElDrawer, ElTabs, ElTabPane, ElCard, ElDescriptions, ElDescriptionsItem, ElTag, ElMessage, ElMessageBox, ElForm, ElFormItem, ElInputNumber, ElCollapse, ElCollapseItem, ElBadge, ElCheckbox } from "element-plus";
+import { settingsApi, downloadSettingsFile, type SettingsPayload, type AppSettingMeta } from "@/api/settings";
 import { API_BASE } from "@/api/client";
 import AiConfigForm from "./AiConfigForm.vue";
 
@@ -88,6 +88,53 @@ async function resetModuleAi(moduleId: string, name: string) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
   }
 }
+
+// ------------------------------------------------------- 配置导入 / 导出
+//
+// 导出默认不含 API Key：配置文件常被随手转发留档，默认不把密钥带出去。
+// 导入时「空值字段 = 不改」，因此导入一份不含 Key 的文件不会把现有 Key 抹掉。
+
+const includeSecrets = ref(false);
+const importing = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null);
+
+function doExport() {
+  downloadSettingsFile(includeSecrets.value);
+  ElMessage.info(includeSecrets.value ? "已导出（含 API Key，请妥善保管）" : "已导出（不含 API Key）");
+}
+
+function pickFile() {
+  fileInput.value?.click();
+}
+
+async function onFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ""; // 允许连续导入同一个文件
+  if (!file) return;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    ElMessage.error("不是有效的 JSON 配置文件");
+    return;
+  }
+  importing.value = true;
+  try {
+    const r = await settingsApi.importConfig(payload);
+    data.value = r.settings;
+    ElMessage.success(
+      `已导入：通用 ${r.applied.app.length} 项、AI 全局 ${r.applied.ai_default.length} 项、` +
+        `模块覆盖 ${r.applied.ai_modules.length} 项` +
+        (r.skipped.length ? `（忽略未知项 ${r.skipped.length} 个）` : ""),
+    );
+    await load();
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    importing.value = false;
+  }
+}
 </script>
 
 <template>
@@ -148,6 +195,31 @@ async function resetModuleAi(moduleId: string, name: string) {
             <div class="cfg-actions">
               <ElButton type="primary" :loading="savingApp" @click="saveApp">保存通用设置</ElButton>
               <span class="field-hint">识别并发调整后需重启应用生效；其余项立即生效</span>
+            </div>
+          </ElCard>
+
+          <!-- 分类四：配置备份与迁移 -->
+          <ElCard shadow="never" class="cfg-card">
+            <template #header>
+              <div class="card-head">
+                <b>配置备份与迁移</b>
+                <span class="card-sub">导出的是当前账号的配置；导入只影响你自己的账号</span>
+              </div>
+            </template>
+            <div class="cfg-actions">
+              <ElCheckbox v-model="includeSecrets">导出时包含 API Key</ElCheckbox>
+              <ElButton :disabled="!data" @click="doExport">导出配置文件</ElButton>
+              <ElButton type="primary" :loading="importing" @click="pickFile">导入配置文件</ElButton>
+              <input
+                ref="fileInput"
+                type="file"
+                accept="application/json,.json"
+                class="hidden-input"
+                @change="onFilePicked"
+              />
+            </div>
+            <div class="field-hint">
+              默认不导出 API Key；导入时配置里为空的项表示「保持现状」，不会被清空。
             </div>
           </ElCard>
 
@@ -405,6 +477,10 @@ async function resetModuleAi(moduleId: string, name: string) {
   align-items: center;
   gap: 10px;
   padding-top: 4px;
+  flex-wrap: wrap;
+}
+.hidden-input {
+  display: none;
 }
 .module-block {
   padding: 12px 0;

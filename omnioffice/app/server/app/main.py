@@ -14,9 +14,10 @@ import asyncio
 import re
 import traceback
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from .core import audit
@@ -74,6 +75,19 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
                 "path": path,
             }
         },
+    )
+
+
+def _set_session_cookie(response: JSONResponse, token: str, expires: datetime) -> None:
+    """下发会话 Cookie。
+
+    httponly=True：JS 读不到 token，即便页面被注入脚本也偷不走登录态；
+    samesite=Lax：应用会被网关嵌套展示，Strict 会连自家子路径的导航也拦掉；
+    path=/：应用挂在 /app/omnioffice 下，显式给根路径，避免某些路径收不到 Cookie。
+    """
+    max_age = max(1, int((expires - datetime.now(timezone.utc)).total_seconds()))
+    response.set_cookie(
+        "oo_session", token, max_age=max_age, httponly=True, samesite="lax", path="/"
     )
 
 
@@ -190,6 +204,180 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
         # B 层导航数据源（V10 8.8）
         return {"modules": registry.list_enabled()}
 
+    # ---------------------------------------------------------- 账号与登录态
+
+    @router.get("/auth/status")
+    def auth_status(request: Request, db: Session = Depends(get_db)):
+        """登录门状态探测（本接口**不需要应用登录**，用于决定要不要弹登录页）。
+
+        返回：
+          required    是否必须登录（mock 模式 / APP_AUTH_REQUIRED=0 时为 false）
+          initialized 该 NAS 账号下是否已有应用账号（没有则前端引导「初始化管理员」）
+          user        当前已登录账号（未登录为 null）
+        """
+        from .core import auth_service
+        from .core.identity import get_nas_identity
+
+        nas = get_nas_identity(request)
+        if nas is None:
+            return JSONResponse(
+                {"error": "UNAUTHORIZED", "message": "未识别到网关身份"}, status_code=401
+            )
+        required = bool(settings.app_auth_required) and settings.identity_mode != "mock"
+        token = (request.cookies.get(auth_service.COOKIE_NAME) or "").strip()
+        user = auth_service.user_by_token(db, token) if required else None
+        if user is not None and user.nas_uid != nas.uid:
+            user = None  # 会话属于另一个 NAS 账号
+        return {
+            "required": required,
+            "initialized": auth_service.count_users(db, nas.uid) > 0,
+            "user": auth_service.public_user(user) if user else None,
+            "nasUser": nas.username,
+            "canRegister": True,
+        }
+
+    @router.post("/auth/register")
+    def auth_register(request: Request, body: dict, db: Session = Depends(get_db)):
+        """注册应用账号；成功后直接登录（签发会话 Cookie）。
+
+        该 NAS 账号下的**第一个**账号自动成为管理员，并沿用 NAS uid 作为数据
+        归属键 —— 这样升级前已存在的周报/模板/导出记录仍然可见。
+        """
+        from .core import auth_service
+        from .core.identity import get_nas_identity
+
+        nas = get_nas_identity(request)
+        if nas is None:
+            return JSONResponse({"error": "UNAUTHORIZED", "message": "未识别到网关身份"}, status_code=401)
+
+        body = body or {}
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
+        confirm = str(body.get("confirm") or "")
+        display_name = str(body.get("displayName") or "").strip()
+
+        err = auth_service.validate_username(username)
+        if err:
+            raise HTTPException(status_code=400, detail={"error": "BAD_USERNAME", "message": err})
+        if confirm and confirm != password:
+            raise HTTPException(
+                status_code=400, detail={"error": "PASSWORD_MISMATCH", "message": "两次输入的密码不一致"}
+            )
+        err = auth_service.validate_password(password)
+        if err:
+            raise HTTPException(status_code=400, detail={"error": "WEAK_PASSWORD", "message": err})
+        if auth_service.get_user_by_username(db, nas.uid, username) is not None:
+            raise HTTPException(
+                status_code=409, detail={"error": "USER_EXISTS", "message": f"账号「{username}」已存在"}
+            )
+
+        is_first = auth_service.count_users(db, nas.uid) == 0
+        try:
+            user = auth_service.create_user(
+                db, nas.uid, username, password, display_name, is_admin=True if is_first else None
+            )
+            auth_service.purge_expired_sessions(db)
+            token, expires = auth_service.issue_session(
+                db, user, remember=bool(body.get("remember")),
+                user_agent=request.headers.get("user-agent", ""),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        audit.log("auth.register", nas.uid, {"username": username, "admin": is_first})
+
+        resp = {"ok": True, "user": auth_service.public_user(user), "isFirst": is_first}
+        out = JSONResponse(resp)
+        _set_session_cookie(out, token, expires)
+        return out
+
+    @router.post("/auth/login")
+    def auth_login(request: Request, body: dict, db: Session = Depends(get_db)):
+        """账号密码登录，成功后下发会话 Cookie。"""
+        from .core import auth_service
+        from .core.identity import get_nas_identity
+
+        nas = get_nas_identity(request)
+        if nas is None:
+            return JSONResponse({"error": "UNAUTHORIZED", "message": "未识别到网关身份"}, status_code=401)
+
+        body = body or {}
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
+        key = f"{nas.uid}:{username}"
+
+        wait = auth_service.check_login_attempts(key)
+        if wait > 0:
+            raise HTTPException(
+                status_code=429,
+                detail={"error": "TOO_MANY_TRIES", "message": f"密码错误次数过多，请 {wait} 秒后再试"},
+            )
+
+        user = auth_service.get_user_by_username(db, nas.uid, username)
+        # 账号不存在与密码错误返回同一句提示：不泄露「这个账号存不存在」
+        if user is None or not auth_service.verify_password(password, user.password_hash, user.salt):
+            auth_service.note_login_failure(key)
+            raise HTTPException(
+                status_code=401, detail={"error": "BAD_CREDENTIALS", "message": "账号或密码不正确"}
+            )
+        if user.disabled:
+            raise HTTPException(status_code=403, detail={"error": "DISABLED", "message": "该账号已被停用"})
+
+        auth_service.clear_login_failures(key)
+        auth_service.purge_expired_sessions(db)
+        token, expires = auth_service.issue_session(
+            db, user, remember=bool(body.get("remember")),
+            user_agent=request.headers.get("user-agent", ""),
+        )
+        user.last_login_at = datetime.now(timezone.utc)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        audit.log("auth.login", nas.uid, {"username": username})
+
+        out = JSONResponse({"ok": True, "user": auth_service.public_user(user)})
+        _set_session_cookie(out, token, expires)
+        return out
+
+    @router.post("/auth/logout")
+    def auth_logout(request: Request, db: Session = Depends(get_db)):
+        """退出：吊销服务端会话并清除 Cookie（幂等，重复调用不报错）。"""
+        from .core import auth_service
+
+        token = (request.cookies.get(auth_service.COOKIE_NAME) or "").strip()
+        if token:
+            auth_service.revoke_session(db, token)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+        out = JSONResponse({"ok": True})
+        out.delete_cookie(auth_service.COOKIE_NAME, path="/")
+        return out
+
+    @router.get("/auth/me")
+    def auth_me(request: Request, db: Session = Depends(get_db)):
+        """当前登录账号；未登录返回 401，前端据此回到登录页。"""
+        from .core import auth_service
+        from .core.identity import get_nas_identity, get_provider
+
+        nas = get_nas_identity(request)
+        identity = get_provider().resolve(request)
+        if nas is None or identity is None:
+            return JSONResponse({"error": "UNAUTHORIZED", "message": "未登录"}, status_code=401)
+        token = (request.cookies.get(auth_service.COOKIE_NAME) or "").strip()
+        user = auth_service.user_by_token(db, token)
+        if user is None:
+            return JSONResponse({"error": "UNAUTHORIZED", "message": "登录已失效，请重新登录"}, status_code=401)
+        return {
+            "user": auth_service.public_user(user),
+            "dataKey": identity.uid,
+            "nasUser": nas.username,
+        }
+
     # ---------------------------------------------------------- 设置（分类配置）
 
     @router.get("/settings")
@@ -202,7 +390,63 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
         from .core import settings_service
         if identity is None:
             return JSONResponse({"error": "UNAUTHORIZED"}, status_code=401)
-        return settings_service.get_all_settings(db, registry.list_enabled())
+        # owner = 当前账号的数据归属键：模板之外的全部配置项按账号隔离
+        owner = identity.uid
+        return settings_service.get_all_settings(db, registry.list_enabled(), owner=owner)
+
+    @router.get("/settings/export")
+    def export_settings(
+        includeSecrets: bool = False,
+        db: Session = Depends(get_db),
+        identity=Depends(get_identity),
+    ):
+        """把当前账号的应用配置导出为 JSON 文件下载。
+
+        API Key 默认不导出（includeSecrets=false）—— 导出文件常被随手转发，
+        默认安全；确需迁移 Key 时勾选「包含 API Key」。
+        """
+        from urllib.parse import quote
+
+        from .core import settings_service
+        if identity is None:
+            return JSONResponse({"error": "UNAUTHORIZED"}, status_code=401)
+        payload = settings_service.export_config(db, identity.uid, bool(includeSecrets))
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        filename = f"omnioffice-settings-{identity.username}-{stamp}.json"
+        return JSONResponse(
+            payload,
+            headers={
+                # filename* 兼容 Safari / 非 ASCII 文件名
+                "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+            },
+        )
+
+    @router.post("/settings/import")
+    def import_settings(
+        body: dict,
+        db: Session = Depends(get_db),
+        identity=Depends(get_identity),
+    ):
+        """从配置文件恢复当前账号的应用配置（只认白名单键，越界字段忽略）。
+
+        语义约定：配置里某项为空 = **不动它**，而不是清空 ——
+        导入一份不含 Key 的文件不应把现有 Key 抹掉。
+        """
+        from .core import settings_service
+        if identity is None:
+            return JSONResponse({"error": "UNAUTHORIZED"}, status_code=401)
+        try:
+            result = settings_service.import_config(db, body or {}, identity.uid)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"error": "BAD_CONFIG_FILE", "message": str(e)}) from None
+        db.commit()
+        audit.log("settings.import", identity.uid, {"applied": result["applied"], "skipped": len(result["skipped"])})
+        return {
+            "ok": True,
+            "applied": result["applied"],
+            "skipped": result["skipped"],
+            "settings": settings_service.get_all_settings(db, registry.list_enabled(), owner=identity.uid),
+        }
 
     @router.put("/settings/app")
     def save_app_settings(body: dict, db: Session = Depends(get_db), identity=Depends(get_identity)):
@@ -210,10 +454,10 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
         from .core import settings_service
         if identity is None:
             return JSONResponse({"error": "UNAUTHORIZED"}, status_code=401)
-        settings_service.save_app_settings(db, body or {})
+        settings_service.save_app_settings(db, body or {}, owner=identity.uid)
         db.commit()
         audit.log("settings.app.update", identity.uid, {"keys": sorted((body or {}).keys())})
-        return {"ok": True, "app": settings_service.get_app_settings(db)}
+        return {"ok": True, "app": settings_service.get_app_settings(db, owner=identity.uid)}
 
     @router.put("/settings/ai")
     def save_ai_settings(
@@ -229,14 +473,14 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
         from .core import settings_service
         if identity is None:
             return JSONResponse({"error": "UNAUTHORIZED"}, status_code=401)
-        settings_service.save_ai_config(db, body or {}, module)
+        settings_service.save_ai_config(db, body or {}, module, owner=identity.uid)
         db.commit()
         audit.log(
             "settings.ai.update",
             identity.uid,
             {"module": module or "default", "fields": sorted(k for k in (body or {}) if k != "api_key")},
         )
-        cfg = settings_service.get_ai_config(db, module)
+        cfg = settings_service.get_ai_config(db, module, owner=identity.uid)
         return {"ok": True, "ai": cfg}
 
     @router.delete("/settings/ai/{module}")
@@ -245,10 +489,10 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
         from .core import settings_service
         if identity is None:
             return JSONResponse({"error": "UNAUTHORIZED"}, status_code=401)
-        settings_service.reset_module_ai(db, module)
+        settings_service.reset_module_ai(db, module, owner=identity.uid)
         db.commit()
         audit.log("settings.ai.reset", identity.uid, {"module": module})
-        return {"ok": True, "ai": settings_service.get_ai_config(db, module)}
+        return {"ok": True, "ai": settings_service.get_ai_config(db, module, owner=identity.uid)}
 
     @router.post("/settings/ai/test")
     def test_ai_connection(
@@ -269,7 +513,7 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
             return JSONResponse({"error": "UNAUTHORIZED"}, status_code=401)
 
         body = body or {}
-        saved = settings_service.resolve_ai(db, module)
+        saved = settings_service.resolve_ai(db, module, owner=identity.uid)
         api_key = (body.get("api_key") or "").strip() or saved["api_key"]
         base_url = (body.get("base_url") or "").strip() or saved["base_url"]
         model = (body.get("model") or "").strip() or saved["model"]

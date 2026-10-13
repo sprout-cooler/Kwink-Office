@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models import Setting
+from ..db.models import Setting, UserSetting
 
 # 前端可见的 AI 配置字段
 AI_FIELDS = ("base_url", "model", "api_key")
@@ -296,6 +296,62 @@ def _delete(db: Session, key: str) -> None:
         db.delete(row)
 
 
+# ------------------------------------------------------- 按账号隔离的读写（owner）
+#
+# owner 为空串 = 旧行为（全局表）；非空的 owner 一律读写 user_settings。
+#
+# 读取为什么要回落到全局表：安装向导注入的默认配置（AI Key / 地址）落在全局表，
+# 若新账号读不到就会回落到「内置兜底」——那是一个不可用的默认地址，用户会一头雾水。
+# 回落顺序天然满足需求「切换用户后互不影响」：读到的全局值是**起点**，
+# 一旦该账号改动过某项，私有值便优先，别人的配置不受影响。
+
+
+def _uget(db: Session, owner: str, key: str) -> str:
+    if not owner:
+        return ""
+    row = db.execute(
+        select(UserSetting).where(UserSetting.owner_uid == owner, UserSetting.key == key)
+    ).scalar_one_or_none()
+    return row.value if row else ""
+
+
+def _uset(db: Session, owner: str, key: str, value: str) -> None:
+    row = db.execute(
+        select(UserSetting).where(UserSetting.owner_uid == owner, UserSetting.key == key)
+    ).scalar_one_or_none()
+    if row:
+        row.value = value
+    else:
+        db.add(UserSetting(owner_uid=owner, key=key, value=value))
+
+
+def _udelete(db: Session, owner: str, key: str) -> None:
+    row = db.execute(
+        select(UserSetting).where(UserSetting.owner_uid == owner, UserSetting.key == key)
+    ).scalar_one_or_none()
+    if row is not None:
+        db.delete(row)
+
+
+def _read(db: Session, owner: str, key: str) -> str:
+    """私有值优先，其次全局值。"""
+    return _uget(db, owner, key) or _get(db, key)
+
+
+def _write(db: Session, owner: str, key: str, value: str) -> None:
+    if owner:
+        _uset(db, owner, key, value)
+    else:
+        _set(db, key, value)
+
+
+def _remove(db: Session, owner: str, key: str) -> None:
+    if owner:
+        _udelete(db, owner, key)
+    else:
+        _delete(db, key)
+
+
 # ------------------------------------------------------------------ 向导注入
 
 
@@ -328,11 +384,15 @@ def inject_wizard_defaults(db: Session, wizard_values: dict[str, str]) -> None:
 # ------------------------------------------------------------------ 运行时读取
 
 
-def resolve_ai(db: Session, module: str | None = None, env: Any | None = None) -> dict[str, Any]:
+def resolve_ai(
+    db: Session, module: str | None = None, env: Any | None = None, owner: str = ""
+) -> dict[str, Any]:
     """解析某模块最终生效的 AI 配置（模块覆盖 > 全局 > 环境变量 > 内置兜底）。
 
     识别链路的唯一入口：每次调用都读库，因此设置页改完立即生效，无需重启。
     返回明文 api_key —— 仅供服务端发起外部调用，绝不序列化给前端。
+
+    owner 为数据归属键（应用账号 data_key）；为空表示全局（未启用账号隔离时）。
     """
     if env is None:
         from .config import settings as env
@@ -340,11 +400,11 @@ def resolve_ai(db: Session, module: str | None = None, env: Any | None = None) -
     def pick(field: str) -> str:
         # 3. 模块覆盖
         if module:
-            v = _get(db, f"ai.{module}.{field}")
+            v = _read(db, owner, f"ai.{module}.{field}")
             if v:
                 return v
-        # 2. 全局默认（DB）
-        v = _get(db, f"ai.default.{field}")
+        # 2. 全局默认（DB：账号私有 → 全局）
+        v = _read(db, owner, f"ai.default.{field}")
         if v:
             return v
         # 1. 环境变量（wizard 兜底）
@@ -362,10 +422,10 @@ def resolve_ai(db: Session, module: str | None = None, env: Any | None = None) -
     }
 
 
-def get_ai_config(db: Session, module: str | None = None) -> dict[str, Any]:
+def get_ai_config(db: Session, module: str | None = None, owner: str = "") -> dict[str, Any]:
     """脱敏视图：给前端用。api_key 只回 has_key / key_masked。"""
-    resolved = resolve_ai(db, module)
-    overrides = _list_module_overrides(db, module) if module else {}
+    resolved = resolve_ai(db, module, owner=owner)
+    overrides = _list_module_overrides(db, module, owner) if module else {}
     key = resolved["api_key"]
     return {
         "base_url": resolved["base_url"],
@@ -380,8 +440,13 @@ def get_ai_config(db: Session, module: str | None = None) -> dict[str, Any]:
     }
 
 
-def save_ai_config(db: Session, data: dict[str, Any], module: str | None = None) -> None:
-    """保存 AI 配置。module=None 写全局默认，否则写模块覆盖层。"""
+def save_ai_config(
+    db: Session, data: dict[str, Any], module: str | None = None, owner: str = ""
+) -> None:
+    """保存 AI 配置。module=None 写全局默认，否则写模块覆盖层。
+
+    owner 非空时写入该账号的私有配置区（user_settings），不影响其他账号。
+    """
     prefix = f"ai.{module}." if module else "ai.default."
     for field in AI_FIELDS:
         if field not in data:
@@ -392,21 +457,29 @@ def save_ai_config(db: Session, data: dict[str, Any], module: str | None = None)
             val = _ensure_url_scheme(val)
         # 模块层：空字符串表示「清除覆盖、回到继承全局」
         if module and not val:
-            _delete(db, f"{prefix}{field}")
+            # 注意：私有区没有值时不能删掉全局继承链——_remove 只删私有 row
+            _remove(db, owner, f"{prefix}{field}")
             continue
-        _set(db, f"{prefix}{field}", val)
+        _write(db, owner, f"{prefix}{field}", val)
 
 
-def reset_module_ai(db: Session, module: str) -> None:
+def reset_module_ai(db: Session, module: str, owner: str = "") -> None:
     """清除某模块的全部 AI 覆盖，回到继承全局默认。"""
     for field in AI_FIELDS:
-        _delete(db, f"ai.{module}.{field}")
+        _remove(db, owner, f"ai.{module}.{field}")
 
 
-def list_modules_with_overrides(db: Session) -> set[str]:
-    """扫描出已配置覆盖的模块 id。"""
-    rows = db.execute(select(Setting).where(Setting.key.like("ai.%"))).scalars().all()
+def list_modules_with_overrides(db: Session, owner: str = "") -> set[str]:
+    """扫描出已配置覆盖的模块 id（含私有区与全局区）。"""
     mods: set[str] = set()
+    if owner:
+        rows = db.execute(
+            select(UserSetting).where(
+                UserSetting.owner_uid == owner, UserSetting.key.like("ai.%")
+            )
+        ).scalars().all()
+        mods |= {r.key.split(".")[1] for r in rows if len(r.key.split(".")) >= 3}
+    rows = db.execute(select(Setting).where(Setting.key.like("ai.%"))).scalars().all()
     for r in rows:
         parts = r.key.split(".")
         if len(parts) >= 3 and parts[1] not in ("default", ""):
@@ -414,9 +487,9 @@ def list_modules_with_overrides(db: Session) -> set[str]:
     return mods
 
 
-def _list_module_overrides(db: Session, module: str) -> dict[str, bool]:
+def _list_module_overrides(db: Session, module: str, owner: str = "") -> dict[str, bool]:
     """某模块哪些字段有自己的配置（未覆盖 = 继承全局）。"""
-    return {f: bool(_get(db, f"ai.{module}.{f}")) for f in AI_FIELDS}
+    return {f: bool(_uget(db, owner, f"ai.{module}.{f}") or _get(db, f"ai.{module}.{f}")) for f in AI_FIELDS}
 
 
 # ------------------------------------------------------------------ 应用级配置
@@ -430,12 +503,12 @@ APP_SETTING_KEYS = {
 }
 
 
-def get_app_settings(db: Session) -> dict[str, Any]:
+def get_app_settings(db: Session, owner: str = "") -> dict[str, Any]:
     from .config import settings as env
 
     out: dict[str, Any] = {}
     for key, meta in APP_SETTING_KEYS.items():
-        raw = _get(db, f"app.{key}")
+        raw = _read(db, owner, f"app.{key}")
         if not raw:
             raw = str(getattr(env, key, "") or "")
         try:
@@ -446,7 +519,7 @@ def get_app_settings(db: Session) -> dict[str, Any]:
     return out
 
 
-def save_app_settings(db: Session, data: dict[str, Any]) -> None:
+def save_app_settings(db: Session, data: dict[str, Any], owner: str = "") -> None:
     """保存应用级配置（仅白名单键，值做范围裁剪）。"""
     for key, meta in APP_SETTING_KEYS.items():
         if key not in data:
@@ -455,29 +528,32 @@ def save_app_settings(db: Session, data: dict[str, Any]) -> None:
             val = int(data[key])
         except (TypeError, ValueError):
             continue
-        _set(db, f"app.{key}", str(max(meta["min"], min(meta["max"], val))))
+        _write(db, owner, f"app.{key}", str(max(meta["min"], min(meta["max"], val))))
 
 
 # ------------------------------------------------------------------ 聚合视图
 
 
-def get_all_settings(db: Session, modules: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def get_all_settings(
+    db: Session, modules: list[dict[str, Any]] | None = None, owner: str = ""
+) -> dict[str, Any]:
     """设置页聚合数据。
 
     modules 由调用方从模块注册表传入，保证「已注册但未配置覆盖」的模块
     也会出现在设置页里（否则用户看不到可配置项）。
+    owner 为当前登录账号的数据归属键 —— 不同账号看到的是各自的私有配置。
     """
     if modules is None:
         modules = []
 
     known = {m["id"]: m for m in modules}
     # 已配置覆盖但注册表里没有的模块也要露出（如历史遗留配置）
-    for mid in list_modules_with_overrides(db):
+    for mid in list_modules_with_overrides(db, owner):
         known.setdefault(mid, {"id": mid, "displayName": mid, "icon": "", "route": "", "tabs": []})
 
     module_views = []
     for mid, meta in known.items():
-        cfg = get_ai_config(db, mid)
+        cfg = get_ai_config(db, mid, owner=owner)
         module_views.append(
             {
                 "id": mid,
@@ -490,10 +566,106 @@ def get_all_settings(db: Session, modules: list[dict[str, Any]] | None = None) -
             }
         )
 
-    default = get_ai_config(db)
+    default = get_ai_config(db, owner=owner)
     return {
         "ai_default": default,
         "ai_modules": module_views,
         "providers": AI_PROVIDERS,
-        "app": get_app_settings(db),
+        "app": get_app_settings(db, owner=owner),
     }
+
+
+# ------------------------------------------------------------------ 配置导入导出
+
+
+CONFIG_EXPORT_KIND = "omnioffice-settings"
+CONFIG_EXPORT_VERSION = 1
+
+
+def export_config(db: Session, owner: str = "", include_secrets: bool = False) -> dict[str, Any]:
+    """导出应用配置为可移植 JSON。
+
+    api_key 默认**不导出**：导出的文件往往会被随手存进网盘/发给同事，
+    默认为 false 是「默认安全」；用户明确需要迁移 Key 时勾选「包含 API Key」。
+    """
+    from datetime import datetime, timezone
+
+    default = resolve_ai(db, None, owner=owner)
+    modules: dict[str, dict[str, str]] = {}
+    for mid in sorted(list_modules_with_overrides(db, owner)):
+        cfg = resolve_ai(db, mid, owner=owner)
+        entry: dict[str, str] = {}
+        for f in AI_FIELDS:
+            v = _uget(db, owner, f"ai.{mid}.{f}")
+            if v:
+                entry[f] = v if (include_secrets or f != "api_key") else ""
+        if entry or cfg["model"]:
+            modules[mid] = entry
+
+    ai_default_out: dict[str, str] = {}
+    for f in AI_FIELDS:
+        v = _uget(db, owner, f"ai.default.{f}") or _get(db, f"ai.default.{f}")
+        if v:
+            ai_default_out[f] = v if (include_secrets or f != "api_key") else ""
+
+    return {
+        "kind": CONFIG_EXPORT_KIND,
+        "version": CONFIG_EXPORT_VERSION,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "app": {k: v["value"] for k, v in get_app_settings(db, owner=owner).items()},
+        "ai_default": ai_default_out,
+        "ai_modules": modules,
+        "includeSecrets": bool(include_secrets),
+    }
+
+
+def import_config(db: Session, payload: dict[str, Any], owner: str = "") -> dict[str, Any]:
+    """导入并应用配置（只认白名单键，越界字段直接忽略，不改成员做降级）。
+
+    返回 {applied: {app:[], ai_default:[], ai_modules:[]}, skipped: [...]}。
+    注意：api_key 为空字符串表示「不动它」，而不是「清空」——
+    清空请用设置页的清除按钮，避免导入一份不含 Key 的文件就把现有 Key 抹掉。
+    """
+    applied: dict[str, list[str]] = {"app": [], "ai_default": [], "ai_modules": []}
+    skipped: list[str] = []
+
+    if not isinstance(payload, dict):
+        raise ValueError("配置文件内容不是一个 JSON 对象")
+
+    kind = str(payload.get("kind") or "")
+    if kind and kind != CONFIG_EXPORT_KIND:
+        raise ValueError(f"不是全能办公室的配置文件（kind={kind or '未知'}）")
+
+    app = payload.get("app")
+    if isinstance(app, dict):
+        clean = {k: v for k, v in app.items() if k in APP_SETTING_KEYS}
+        if clean:
+            save_app_settings(db, clean, owner=owner)
+            applied["app"] = sorted(clean)
+        skipped += [k for k in app if k not in APP_SETTING_KEYS]
+
+    ai_default = payload.get("ai_default")
+    if isinstance(ai_default, dict):
+        data = {f: str(ai_default.get(f, "") or "") for f in AI_FIELDS if f in ai_default}
+        # 空值字段剔除（= 不改），避免把有效配置清成空
+        data = {f: v for f, v in data.items() if v}
+        if data:
+            save_ai_config(db, data, None, owner=owner)
+            applied["ai_default"] = sorted(data)
+        skipped += [k for k in ai_default if k not in AI_FIELDS]
+
+    modules = payload.get("ai_modules")
+    if isinstance(modules, dict):
+        for mid, cfg in modules.items():
+            if not isinstance(cfg, dict):
+                skipped.append(str(mid))
+                continue
+            data = {f: str(cfg.get(f, "") or "") for f in AI_FIELDS if f in cfg}
+            data = {f: v for f, v in data.items() if v}
+            if not data:
+                continue
+            save_ai_config(db, data, str(mid), owner=owner)
+            applied["ai_modules"].append(str(mid))
+            skipped += [f"{mid}.{k}" for k in cfg if k not in AI_FIELDS]
+
+    return {"applied": applied, "skipped": skipped}
