@@ -1,8 +1,11 @@
 # 机器本地便携工具与产物
 .tools/
 *.fpk
-# 但保留每个「版本号化」的发布包：盘上不覆盖、git 里也留档
-!omnioffice/omnioffice-*.fpk
+# 但保留 releases/ 下每个「版本号化」的发布包与构建记录：盘上不覆盖、git 里也留档
+# （版本化 fpk 同步留档进 Git，随 gitee + gitcode 双远端同步）
+!releases/
+!releases/**/*.fpk
+!releases/build-log.json
 __pycache__/
 *.pyc
 .venv/

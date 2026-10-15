@@ -1,5 +1,5 @@
-# Build FPK package: web build -> encoding -> clean -> tests -> slim -> gate -> fnpack build -> restore.
-# Usage: powershell -ExecutionPolicy Bypass -File tools\package-fpk.ps1
+# Build FPK package: web build -> encoding -> clean -> tests -> slim -> gate -> build-fpk.js (auto version bump + versioned archive) -> restore.
+# Usage: powershell -ExecutionPolicy Bypass -File tools\package-fpk.ps1 [-Bump patch|minor|major] [-SetVersion X.Y.Z] [-Tag] [-Message "..."]
 # Prereq: none -- the web bundle is built automatically (step 0).
 #
 # Step 0 is PERMANENT and must never be removed again (it was deleted during the
@@ -13,8 +13,23 @@
 # before we can read $LASTEXITCODE. Each step therefore goes through
 # Invoke-Step, which checks the exit code explicitly and always restores the
 # slimmed-out dependencies before exiting.
+#
+# Versioning (since the releases/ migration): packaging goes through
+# scripts/build-fpk.js, which auto-bumps manifest.version (default patch) BEFORE
+# fnpack build, archives to releases/<appname>_<version>_<platform>_<YYYYMMDD>[_n].fpk
+# (never overwrites an existing package), appends releases/build-log.json, and
+# hard-fails when git tag v<new-version> already exists (version reuse).
+# Use -Bump/-SetVersion to control the bump, -Tag to also create the annotated
+# tag, -Message for the build-log note. Old flow (fnpack build + rename to
+# omnioffice-X.Y.Z.fpk) is gone -- do not reintroduce a manual rename.
 
 $ErrorActionPreference = 'Stop'
+param(
+    [string]$Bump = "patch",
+    [string]$SetVersion = "",
+    [switch]$Tag,
+    [string]$Message = ""
+)
 $proj = "e:\Project\FN\All-in-OneOffice"
 $node = "$proj\.tools\node\node.exe"
 $python = "$proj\.tools\python\python.exe"
@@ -73,32 +88,21 @@ try {
     # 3) packaging gate (hard gate before fnpack build)
     Invoke-Step "check-fpk-gate" { & $node "$proj\build\check-fpk.mjs" }
 
-    # 4) fnpack build (cwd = package root) -> outputs omnioffice.fpk
-    Invoke-Step "fnpack-build" {
-        Push-Location "$proj\omnioffice"
-        try { & $fnpack build } finally { Pop-Location }
-    }
-
-    # 4b) rename to a versioned file so previous releases are NEVER overwritten.
-    #     manifest carries `version=X.Y.Z`; the build's plain omnioffice.fpk
-    #     always becomes omnioffice-<version>.fpk. Historic versions stay on disk.
-    $verLine = Select-String -Path "$proj\omnioffice\manifest" -Pattern '^version=(.+)$' | Select-Object -First 1
-    if ($verLine) {
-        $ver = $verLine.Matches.Groups[1].Value.Trim()
-        $src = "$proj\omnioffice\omnioffice.fpk"
-        $dst = "$proj\omnioffice\omnioffice-$ver.fpk"
-        if (Test-Path $src) {
-            Move-Item -Force $src $dst
-            Write-Host ("==> versioned FPK: omnioffice-{0}.fpk" -f $ver)
-        }
-    } else {
-        Write-Warning "manifest version not found; leaving omnioffice.fpk as-is"
-    }
+    # 4) versioned packaging via scripts/build-fpk.js (portable node + .tools/fnpack):
+    #    auto-bumps manifest.version -> fnpack build -> archives to releases/
+    #    (never overwrites) -> appends releases/build-log.json -> tag collision
+    #    check -> git dual-remote archival reminder (with -Tag: annotated tag too).
+    $buildArgs = @("omnioffice")
+    if ($SetVersion) { $buildArgs += @("--set-version", $SetVersion) }
+    else { $buildArgs += @("--bump", $Bump) }
+    if ($Message) { $buildArgs += @("--message", $Message) }
+    if ($Tag) { $buildArgs += "--tag" }
+    Invoke-Step "fnpack-build" { & $node "$proj\scripts\build-fpk.js" @buildArgs }
 } finally {
     # Always restore, so the next frontend build still has its dependency tree.
     Restore-Deps
 }
 
-Get-ChildItem "$proj\omnioffice\omnioffice-*.fpk" -ErrorAction SilentlyContinue |
+Get-ChildItem "$proj\releases\*.fpk" -ErrorAction SilentlyContinue |
     Sort-Object Name |
     ForEach-Object { Write-Output ("FPK: {0} ({1} MB)" -f $_.FullName, [math]::Round($_.Length / 1MB, 2)) }

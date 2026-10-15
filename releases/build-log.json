@@ -1,0 +1,38 @@
+[
+  {
+    "ts": "2026-10-13T21:16:50+08:00",
+    "appname": "omnioffice",
+    "version": "1.0.18",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.18_all_20261013.fpk",
+    "commit": "5429b49",
+    "note": "迁移补录：init repo + v1.0.18 release"
+  },
+  {
+    "ts": "2026-10-14T00:08:47+08:00",
+    "appname": "omnioffice",
+    "version": "1.0.19",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.19_all_20261014.fpk",
+    "commit": "7f27165",
+    "note": "迁移补录"
+  },
+  {
+    "ts": "2026-10-14T00:08:47+08:00",
+    "appname": "omnioffice",
+    "version": "1.0.20",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.20_all_20261014.fpk",
+    "commit": "7f27165",
+    "note": "迁移补录：百炼 404 修复（模型清单更新为官方现役）"
+  },
+  {
+    "ts": "2026-10-14T01:16:26+08:00",
+    "appname": "omnioffice",
+    "version": "1.0.21",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.21_all_20261014.fpk",
+    "commit": "c99064e",
+    "note": "迁移补录：用户注册登录 + 账号级数据隔离 + 模板版本管理"
+  }
+]
