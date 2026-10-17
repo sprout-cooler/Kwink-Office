@@ -6,6 +6,12 @@
 !releases/
 !releases/**/*.fpk
 !releases/build-log.json
+# fpk 打包中间产物（只允许出现在 releases/ 下）
+appdir/
+output/
+dist-archive/
+*.unpacked/
+*.tgz
 __pycache__/
 *.pyc
 .venv/
