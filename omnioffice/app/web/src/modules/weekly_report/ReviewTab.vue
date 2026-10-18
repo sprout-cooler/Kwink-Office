@@ -7,7 +7,7 @@
 // - 时间字段编辑用「原文输入」（用户照着原图敲「周四 10:00」），服务端统一归一化；
 // - 每次保存后用服务端返回的 DTO 覆盖本地行，确保「归一化后的结果」与后端一致，
 //   避免前端自己猜日期格式导致两套口径。
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   weeklyApi,
@@ -18,12 +18,21 @@ import {
   type PartitionId,
   type TaskItemDto,
 } from "@/api/weekly-report";
+import TaskTimeField from "./TaskTimeField.vue";
 
 const loading = ref(false);
 const saving = ref<number | null>(null);
 const items = ref<TaskItemDto[]>([]);
 const filterPartition = ref<PartitionId | "">("");
 const filterIssue = ref(false);
+
+/** 本周报周期起始日（YYYY-MM-DD），供时间字段做越界提示；取不到就不判定 */
+const periodStart = ref("");
+
+/** 行内时间草稿：id → { start, end }。
+ *  提交任一时刻都必须把**两个字段**一起送服务端（_renormalize 收成对的原文），
+ *  所以草稿挂在父组件，行内输入框与日历面板共用同一份，互不覆盖。 */
+const timeDraft = reactive<Record<number, { start: string; end: string }>>({});
 
 // 原图对照抽屉
 const compareTask = ref<TaskItemDto | null>(null);
@@ -88,8 +97,13 @@ const totalCount = computed(() => items.value.length);
 async function refresh() {
   loading.value = true;
   try {
-    const r = await weeklyApi.tasks();
+    const [r, st] = await Promise.all([weeklyApi.tasks(), weeklyApi.state()]);
     items.value = r;
+    periodStart.value = st.periodStart || "";
+    // 每次刷新都重置草稿：以服务端归一化后的结果为准
+    for (const t of r) {
+      timeDraft[t.id] = { start: toEditable(t.startAt), end: toEditable(t.endAt) };
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
   } finally {
@@ -107,9 +121,15 @@ async function save(task: TaskItemDto, patch: Record<string, unknown>, okMsg?: s
     const updated = await weeklyApi.patchTask(task.id, patch as never);
     const idx = items.value.findIndex((t) => t.id === task.id);
     if (idx >= 0) items.value[idx] = updated;
+    // 时间字段保存后同步草稿，避免与服务端归一化结果不一致（如 DATE_ONLY 补 00:00）
+    if ("startTime" in patch || "endTime" in patch) {
+      timeDraft[updated.id] = { start: toEditable(updated.startAt), end: toEditable(updated.endAt) };
+    }
     if (okMsg) ElMessage.success(okMsg);
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
+    // 保存失败：草稿回退到服务端值，避免界面停留在没保存上的文本
+    timeDraft[task.id] = { start: toEditable(task.startAt), end: toEditable(task.endAt) };
   } finally {
     saving.value = null;
   }
@@ -128,11 +148,20 @@ function toEditable(iso: string): string {
   return iso.replace("T", " ").slice(0, 16);
 }
 
-async function onTimeBlur(t: TaskItemDto, startVal: string, endVal: string) {
-  const s = startVal.trim();
-  const e = endVal.trim();
-  if (s === toEditable(t.startAt) && e === toEditable(t.endAt)) return;
-  await save(t, { startTime: s, endTime: e }, "时间已更新并归一化");
+/** 某行的时间草稿（未初始化时按服务端值兜底） */
+function draftOf(t: TaskItemDto): { start: string; end: string } {
+  if (!timeDraft[t.id]) {
+    timeDraft[t.id] = { start: toEditable(t.startAt), end: toEditable(t.endAt) };
+  }
+  return timeDraft[t.id];
+}
+
+/** 时间提交（行内输入与日历面板共用）：成对送 start/end，服务端统一归一化。
+ *  与原时间完全一致时组件已短路，这里再兜一层，避免无谓请求。 */
+async function commitTime(t: TaskItemDto) {
+  const d = draftOf(t);
+  if (d.start === toEditable(t.startAt) && d.end === toEditable(t.endAt)) return;
+  await save(t, { startTime: d.start, endTime: d.end }, "时间已更新并归一化");
 }
 
 async function onWeekdayChange(t: TaskItemDto, wd: number) {
@@ -164,6 +193,7 @@ async function removeTask(t: TaskItemDto) {
   try {
     await weeklyApi.removeTask(t.id);
     items.value = items.value.filter((x) => x.id !== t.id);
+    delete timeDraft[t.id];
     ElMessage.success("已删除");
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
@@ -183,6 +213,7 @@ async function submitCreate() {
       endTime: draft.value.endTime.trim(),
     });
     items.value.push(t);
+    timeDraft[t.id] = { start: toEditable(t.startAt), end: toEditable(t.endAt) };
     draft.value = { title: "", partition: "offline_done", startTime: "", endTime: "" };
     creating.value = false;
     ElMessage.success("已手工新增");
@@ -298,13 +329,23 @@ async function confirmAllVisible() {
           </el-select>
         </el-form-item>
         <el-form-item label="开始时间" :required="draftTimeRequired">
-          <el-input
-            v-model="draft.startTime"
+          <!-- 新增弹窗只取文本（v-model），不接 @commit：最终以「新增」按钮统一提交 -->
+          <TaskTimeField
+            v-model:text="draft.startTime"
+            :iso="draft.startTime"
+            :period-start="periodStart"
+            :allow-future="!draftTimeRequired"
             :placeholder="draftTimeRequired ? '如：10月9日 15:30 / 周四 10:00' : '非必填，可留空'"
           />
         </el-form-item>
         <el-form-item label="结束时间">
-          <el-input v-model="draft.endTime" placeholder="可留空" />
+          <TaskTimeField
+            v-model:text="draft.endTime"
+            :iso="draft.endTime"
+            :period-start="periodStart"
+            allow-future
+            placeholder="可留空"
+          />
         </el-form-item>
       </el-form>
       <p class="tip">
@@ -340,25 +381,31 @@ async function confirmAllVisible() {
           </template>
         </el-table-column>
 
-        <el-table-column label="开始时间" width="180">
+        <el-table-column label="开始时间" width="210">
           <template #default="{ row }: { row: TaskItemDto }">
-            <el-input
-              :model-value="toEditable(row.startAt)"
-              size="small"
+            <TaskTimeField
+              :text="draftOf(row).start"
+              :iso="row.startAt"
+              :period-start="periodStart"
+              :allow-future="!timeRequiredFor(row)"
               :placeholder="timeRequiredFor(row) ? '如 周四 10:00' : '非必填，可留空'"
-              :class="{ 'cell-err': timeRequiredFor(row) && row.warnings.includes('DATE_PARSE_FAILED') }"
-              @blur="(v: string) => onTimeBlur(row, v, toEditable(row.endAt))"
+              :invalid="timeRequiredFor(row) && row.warnings.includes('DATE_PARSE_FAILED')"
+              @update:text="(v: string) => (draftOf(row).start = v)"
+              @commit="commitTime(row)"
             />
           </template>
         </el-table-column>
 
-        <el-table-column label="结束时间" width="180">
+        <el-table-column label="结束时间" width="210">
           <template #default="{ row }: { row: TaskItemDto }">
-            <el-input
-              :model-value="toEditable(row.endAt)"
-              size="small"
+            <TaskTimeField
+              :text="draftOf(row).end"
+              :iso="row.endAt"
+              :period-start="periodStart"
+              :allow-future="true"
               placeholder="可留空"
-              @blur="(v: string) => onTimeBlur(row, toEditable(row.startAt), v)"
+              @update:text="(v: string) => (draftOf(row).end = v)"
+              @commit="commitTime(row)"
             />
           </template>
         </el-table-column>
@@ -503,9 +550,6 @@ async function confirmAllVisible() {
 }
 .tbl {
   width: 100%;
-}
-.cell-err :deep(.el-input__wrapper) {
-  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 .conf-cell {
   display: flex;

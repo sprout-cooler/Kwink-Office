@@ -23,13 +23,16 @@
 # tag, -Message for the build-log note. Old flow (fnpack build + rename to
 # omnioffice-X.Y.Z.fpk) is gone -- do not reintroduce a manual rename.
 
-$ErrorActionPreference = 'Stop'
+# PowerShell 5.1 requires param() to be the FIRST statement in the file.
+# It used to sit after $ErrorActionPreference, which made every invocation fail
+# with "InvalidLeftHandSide" while parsing [string]$Bump = "patch".
 param(
     [string]$Bump = "patch",
     [string]$SetVersion = "",
     [switch]$Tag,
     [string]$Message = ""
 )
+$ErrorActionPreference = 'Stop'
 $proj = "e:\Project\FN\All-in-OneOffice"
 $node = "$proj\.tools\node\node.exe"
 $python = "$proj\.tools\python\python.exe"
