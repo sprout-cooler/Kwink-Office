@@ -26,7 +26,7 @@ from typing import Any, Sequence
 
 from fastapi import HTTPException, UploadFile
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -108,6 +108,111 @@ def _diag_uid() -> str:
 
 def templates_root() -> Path:
     return _ensure_dir(Path(settings.data_dir) / "templates", "模板")
+
+
+def _write_template_file(target: Path, data: bytes) -> Path:
+    """把模板内容**原子地**写到 target，返回最终路径。
+
+    为什么不用 `if not exists(): write_bytes()`（原实现）：
+    1. exists() 为真时直接跳过 —— 但文件内容可能已损坏/半截，仍被当成有效模板；
+    2. write_bytes 是「截断 → 写入」，写入中途断电/磁盘满会留下**半截文件**，
+       后续 load_workbook 抛 BadZipFile，用户看到的却是「模板损坏」这种误导性提示；
+    3. 文件已存在且内容一致时其实无需重写（省一次 IO），但**必须校验存在性**，
+       不能因为「记录说它在」就假定它在。
+
+    改为：同内容且可读则跳过（幂等），否则写临时文件再 os.replace 原子替换。
+    """
+    try:
+        if target.is_file() and target.stat().st_size == len(data):
+            # 内容已一致则不重复写盘；md5 命中已由调用方保证，这里只做存在性确认
+            return target
+    except OSError:
+        pass
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(suffix=".tmp", dir=str(target.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        print(f"[export] 模板落盘失败 {target}: {type(e).__name__}: {e}", flush=True)
+        _diag_trace(
+            "模板落盘失败",
+            f"目标: {target}\n错误: {type(e).__name__}: {e}\nDATA_DIR: {settings.data_dir}",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "TEMPLATE_WRITE_FAILED",
+                "message": f"模板文件写入失败（{type(e).__name__}: {e}）。"
+                           f"请检查数据目录 {settings.data_dir} 的写权限与剩余空间",
+                "diagLog": _diag_path(),
+            },
+        ) from None
+    print(f"[export] 模板已落盘: {target} ({len(data)} bytes)", flush=True)
+    return target
+
+
+def migrate_legacy_data() -> int:
+    """一次性把旧数据目录（安装目录 target 下）的内容搬进持久目录。返回搬运文件数。
+
+    背景（v1.0.23）：历史上 DATA_DIR 指向 `${TRIM_APPDEST}/share`，而该目录
+    属于**安装目录**，fnOS 升级会清空；数据库却在 `${TRIM_PKGVAR}` 升级保留。
+    于是升级后必然出现「记录在、文件没了」。现已把数据目录改到 `${TRIM_PKGVAR}/data`，
+    本函数负责把**升级前尚未被清空**的遗留文件抢救进新目录。
+
+    规则：
+    - 目标已存在同名同大小文件 → 跳过（幂等，重启不重复搬）；
+    - 旧目录不可读/不存在 → 直接返回 0，不报错（本地开发无此目录）；
+    - 迁移的是用户资产，**只搬运不删除旧文件**，最坏情况是冗余，不会丢数据。
+    """
+    legacy_root = (settings.legacy_data_dir or "").strip()
+    if not legacy_root:
+        return 0
+    legacy = Path(legacy_root)
+    if not legacy.is_dir():
+        return 0
+
+    moved = 0
+    # 只搬这三类用户资产；其余（日志、诊断、数据库）留在原处
+    for sub in ("templates", "uploads"):
+        src_dir = legacy / sub
+        if not src_dir.is_dir():
+            continue
+        dst_dir = Path(settings.data_dir) / sub
+        try:
+            dst_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"[migrate] 目标目录不可创建 {dst_dir}: {type(e).__name__}: {e}", flush=True)
+            continue
+        try:
+            files = [p for p in src_dir.rglob("*") if p.is_file()]
+        except OSError as e:
+            print(f"[migrate] 扫描旧目录失败 {src_dir}: {type(e).__name__}: {e}", flush=True)
+            continue
+        for src in files:
+            rel = src.relative_to(src_dir)
+            dst = dst_dir / rel
+            try:
+                if dst.is_file() and dst.stat().st_size == src.stat().st_size:
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                moved += 1
+                print(f"[migrate] 搬运 {src} -> {dst}", flush=True)
+            except OSError as e:
+                print(f"[migrate] 搬运失败 {src}: {type(e).__name__}: {e}", flush=True)
+
+    if moved:
+        print(f"[migrate] 旧数据迁移完成，共搬运 {moved} 个文件 → {settings.data_dir}", flush=True)
+    else:
+        print(f"[migrate] 无需迁移（目标目录已含全部文件）: {legacy} → {settings.data_dir}", flush=True)
+    return moved
 
 
 def exports_root(uid: str) -> Path:
@@ -218,29 +323,57 @@ async def upload_template(
     # 曾误缩进到 finally 块里，导致「校验失败」被 finally 的执行时机掩盖，
     # 结构不符的模板也能成功入库（anchorOk 却是 True），是严重的静默错误。
     md5 = hashlib.md5(data).hexdigest()
+    target = templates_root() / f"{md5}.xlsx"
+
+    # 落盘：**先确保文件真的在磁盘上**，再谈入库。
+    # v1.0.23 修复：原实现是「if not stored.exists(): stored.write_bytes(data)」。
+    # 一旦文件被外部清掉（升级清目录、挂载点变动、人工清理）而 DB 记录还在，
+    # 这里会因为 exists() 为假而重写 —— 看似正确；但真正的坑在下面的去重分支：
+    # 查���同 md5 记录就直接 return duplicated，**从不检查文件是否存在**，
+    # 于是用户重新上传同一个模板时什么都没发生（文件依然缺失），只能不断新增。
+    _write_template_file(target, data)
+
     existing = db.scalar(
         select(TemplateVersion).where(
             TemplateVersion.owner_uid == identity.uid, TemplateVersion.md5 == md5
         )
     )
     if existing is not None:
+        # 命中同内容记录：**复用该记录，但必须把路径/大小修正到当前真实文件**。
+        # 文件已由上面的 _write_template_file 确保落盘，这里只校准元信息，
+        # 避免记录指向一个已经不存在的旧路径（如升级前的安装目录路径）。
+        real_path = str(target)
+        if existing.stored_path != real_path or existing.size != len(data):
+            existing.stored_path = real_path
+            existing.size = len(data)
+            try:
+                db.commit()
+                db.refresh(existing)
+            except SQLAlchemyError as e:
+                db.rollback()
+                print(f"[export] 模板路径校准落库失败: {type(e).__name__}: {e}", flush=True)
+        if note and existing.note != note[:255]:
+            existing.note = note[:255]
+            db.commit()
+        print(
+            f"[export] 模板重复上传，按内容复用记录 id={existing.id} → {real_path}",
+            flush=True,
+        )
         return {"template": _template_dto(existing), "duplicated": True, "sheet": sheet_name}
 
-    # 版本号 = 该用户已有模板数 + 1（同一 md5 已去重，不会撞号）
-    count = len(
-        list(db.scalars(select(TemplateVersion).where(TemplateVersion.owner_uid == identity.uid)))
+    # 版本号 = 该用户已有模板中最大版本 + 1。
+    # 原实现用「记录条数 + 1」：删过模板后条数会变小，导致新版本号与现存记录撞号，
+    # 界面出现两个 v2。取 max 才与实际展示的版本序列一致。
+    max_ver = db.scalar(
+        select(func.max(TemplateVersion.version)).where(TemplateVersion.owner_uid == identity.uid)
     )
-    stored = templates_root() / f"{md5}.xlsx"
-    if not stored.exists():
-        stored.write_bytes(data)
-
     row = TemplateVersion(
         owner_uid=identity.uid,
         filename=_safe_name(name, "template.xlsx"),
-        stored_path=str(stored),
+        stored_path=str(target),
         md5=md5,
         size=len(data),
-        version=count + 1,
+        version=int(max_ver or 0) + 1,
         anchor_ok=1,
         note=note[:255],
     )
@@ -285,22 +418,93 @@ def latest_template(db: Session, identity: Identity) -> TemplateVersion | None:
 
 
 def delete_template(db: Session, identity: Identity, template_id: int) -> None:
+    """删除模板：**记录与文件同步清理**，不留脏数据。
+
+    v1.0.23 修复（此前只删 DB 记录，文件留在盘上）：
+    1. 删记录不删文件 → 孤儿 xlsx 堆积；更糟的是 `_rebuild_template_record`
+       会把孤儿文件重新登记成记录，用户「删了又出现」；
+    2. 文件已丢失时仍抛 409（TEMPLATE_IN_USE）让用户无路可走 ——
+       记录在、文件没了的场景下，卡住删除毫无意义（导出本来就已不可用），
+       改为允许删除并顺带清理绑定。
+
+    顺序：先删文件 → 再删记录。文件删不掉（权限/占用）不阻断删记录，
+    否则用户会被永久卡在「有记录但删不了」的死结里（正是本次事故的现象）。
+    """
     t = _owned_template(db, identity, template_id)
-    # 若有周报批次仍绑定该版本，禁止删除（否则历史周报无法再导出）
-    bound = db.scalar(
-        select(Report).where(Report.owner_uid == identity.uid, Report.template_id == template_id).limit(1)
-    )
-    if bound is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "TEMPLATE_IN_USE",
-                "message": f"已有周报批次绑定该模板（批次 #{bound.id}），请先改绑其他模板再删除",
-            },
+
+    # v1.0.23：Report.template_id 是指向 template_versions.id 的外键，
+    # 直接删模板会撞数据库外键约束（PG: update or delete on table violates foreign key）。
+    # 原实现用 409 拦住是安全的，但代价是「记录在、文件已丢」时用户彻底删不掉。
+    # 现在改为**先解绑再删除**：解绑只影响绑定关系，历史批次的导出产物已在库里，
+    # 且 resolve_template 在无绑定时会回落到该用户最新模板，不会让历史周报导出失败。
+    unbound = db.scalars(
+        select(Report).where(Report.owner_uid == identity.uid, Report.template_id == template_id)
+    ).all()
+    for r in unbound:
+        r.template_id = None
+    if unbound:
+        db.commit()
+        print(
+            f"[export] 模板删除前解绑 {len(unbound)} 个周报批次: templateId={template_id}",
+            flush=True,
         )
+
+    # 该 md5 是否还有其他记录在用（正常不会，md5 已去重；防御性检查）
+    md5 = t.md5
+    shared = db.scalar(
+        select(TemplateVersion.id).where(
+            TemplateVersion.owner_uid == identity.uid,
+            TemplateVersion.md5 == md5,
+            TemplateVersion.id != template_id,
+        ).limit(1)
+    )
+    file_deleted = False
+    if shared is None:
+        file_deleted = _remove_template_file(t)
+    else:
+        print(f"[export] 模板文件被其他记录共用，保留文件: {md5}", flush=True)
+
     db.delete(t)
     db.commit()
-    audit.log("template.delete", identity.uid, {"id": template_id})
+    audit.log(
+        "template.delete",
+        identity.uid,
+        {"id": template_id, "md5": md5[:8], "fileDeleted": file_deleted},
+    )
+    if not file_deleted and shared is None:
+        print(
+            f"[export] 模板记录已删除但文件未清理（可能文件本就不存在）: id={template_id} {md5}",
+            flush=True,
+        )
+
+
+def _remove_template_file(t: TemplateVersion) -> bool:
+    """删除模板对应的磁盘文件。返回是否确实删掉了文件。
+
+    只允许删 templates_root() 目录内的 <md5>.xlsx —— 不信任 DB 里的 stored_path
+    （历史脏数据可能指向任意位置，甚至安装目录），杜绝目录穿越。
+    """
+    root = templates_root()
+    candidates = [root / f"{t.md5}.xlsx"]
+    legacy = Path(t.stored_path or "")
+    if legacy.name == f"{t.md5}.xlsx":
+        candidates.append(legacy)
+
+    removed = False
+    for p in candidates:
+        try:
+            if p.is_file():
+                p.unlink()
+                removed = True
+                print(f"[export] 模板文件已删除: {p}", flush=True)
+        except OSError as e:
+            # 删不掉只记录不抛出：记录必须能删掉，否则用户彻底卡死
+            print(f"[export] 模板文件删除失败 {p}: {type(e).__name__}: {e}", flush=True)
+            _diag_trace(
+                "模板文件删除失败",
+                f"路径: {p}\n错误: {type(e).__name__}: {e}",
+            )
+    return removed
 
 
 def bind_template(db: Session, identity: Identity, report: Report, template_id: int) -> dict:
@@ -399,10 +603,10 @@ def _assert_template_file(db: Session, tpl: TemplateVersion) -> Path:
 
     自愈策略（按可靠性排序）：
       1. **原路径存在** → 直接用；
-      2. **模板目录里有同名/同 md5 的文件**（路径变了但内容还在）→ 修正 DB 里的路径；
-      3. **目录里只有唯一一份xlsx** → 认它为丢失的那个（用户多半只有一份模板），
-         重新校验锚点结构，通过后修正 DB 路径；
-      4. 都不成立 → 才报错，且明确告知怎么办。
+      2. **模板目录里有同 md5 的文件**（路径变了但内容还在）→ 修正 DB 里的路径；
+      3. **文件名对得上** → 修正路径；
+      4. **目录里还有结构合格的 xlsx** → 认它为丢失的那个（降级猜测，多模板时可能认错）；
+      5. 都不成立 → 才报错，且明确告知怎么办。
     """
     p = Path(tpl.stored_path or "")
     if p.is_file():
@@ -411,15 +615,23 @@ def _assert_template_file(db: Session, tpl: TemplateVersion) -> Path:
     tpl_dir = templates_root()
     recovered: Path | None = None
 
-    # 策略 2：同名文件被挪了位置（最可信，优先）
-    same_name = tpl_dir / p.name
-    if same_name.is_file():
-        recovered = same_name
+    # 策略 1（最可信）：按 md5 找 —— 文件名就是 md5，内容必然一致
+    by_md5 = tpl_dir / f"{tpl.md5}.xlsx"
+    if by_md5.is_file() and _is_valid_template(by_md5):
+        recovered = by_md5
+        print(f"[export] 模板按 md5 找回: {by_md5.name} (id={tpl.id})", flush=True)
 
-    # 策略 3：在目录里找**结构合格**的候选（按 mtime 倒序，优先最近上传的）
+    # 策略 2：文件名对得上（路径变了但内容还在）
+    if recovered is None and p.name:
+        same_name = tpl_dir / p.name
+        if same_name.is_file():
+            recovered = same_name
+
+    # 策略 3：目录里找**结构合格**的候选（按 mtime 倒序，优先最近上传的）
     #
     # 注意不能只看「目录里只有一份」—— 目录里可能有半截下载的坏文件、或别处的残留。
     # 必须逐个用 validate_template 校验，找到第一个合格的即认它为丢失的那个。
+    # 这一步是**降级猜测**：多模板用户可能认错，故仅在前面都失败时启用。
     if recovered is None:
         try:
             pool = sorted(
@@ -455,7 +667,7 @@ def _assert_template_file(db: Session, tpl: TemplateVersion) -> Path:
             },
         ) from None
 
-    # 策略 2 的候选也要校验（它可能同名但内容已被破坏）
+    # 策略 2/3 的候选也要校验（它可能同名但内容已被破坏）
     if not _is_valid_template(recovered):
         print(f"[export] 同名模板不合格: {recovered}", flush=True)
         raise HTTPException(

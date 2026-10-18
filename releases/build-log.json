@@ -43,5 +43,14 @@
     "fpk": "omnioffice_1.0.22_all_20261018.fpk",
     "commit": null,
     "note": "周报识别校对时间字段升级：可点击编辑 + 原位日历面板；修复 el-input blur 事件误当字符串使用导致时间列无法编辑"
+  },
+  {
+    "ts": "2026-10-18T04:54:17.414Z",
+    "appname": "omnioffice",
+    "version": "1.0.24",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.24_all_20261018.fpk",
+    "commit": null,
+    "note": "修复模板文件丢失与重复上传缺陷：数据目录改为 TRIM_PKGVAR 与库同命、重复上传修复丢失文件、删除同步清文件并自动解绑、版本号取max+1"
   }
 ]

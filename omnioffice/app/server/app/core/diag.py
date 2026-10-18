@@ -195,6 +195,9 @@ def dump_screenshot_records() -> str:
     真机事故（≤1.0.18）：用户数据挂在 ${TRIM_APPDEST}/share（安装 target），
     升级时该目录被清空，于是 DB 记录还在、原图没了，前端回显全部 410 Gone。
     这里同时给出「记录数 / 文件缺失数 / 缺失样本路径」，一眼可判定是哪一种。
+
+    v1.0.23：数据目录已改为 ${TRIM_PKGVAR}/data（与数据库同命，升级保留），
+    本函数仍是判断「记录与文件是否脱节」的主要手段。
     """
     return _dump_screenshot_records()
 
@@ -311,6 +314,7 @@ def _dump_screenshot_records() -> str:
     ≤1.0.18 真机事故：用户数据挂 ${TRIM_APPDEST}/share（安装 target），
     升级时该目录被清空 → DB 记录还在、原图没了 → 前端回显 410 Gone。
     这里给出「总数 / 缺失数 / 缺失样本 / 现存样本路径」，足以判定是哪一类。
+    v1.0.23 起数据目录改为 ${TRIM_PKGVAR}/data，与数据库同命不再被清空。
     """
     try:
         from sqlalchemy import text

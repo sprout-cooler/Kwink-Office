@@ -2,7 +2,8 @@
 
 覆盖：
 - 模板上传（结构校验通过才入库 / 结构不符 400 / 重复 md5 去重 / 非 xlsx 拒绝）；
-- 版本绑定（绑定后按绑定版本导出；有批次绑定时禁止删除）；
+- 版本绑定（绑定后按绑定版本导出；删除时自动解绑，v1.0.23 契约变更）；
+- 模板文件与记录的一致性（落盘持久 / 文件丢失后重传可修复 / 删除同步清文件）；
 - 导出编排（卡点阻断 / 产物命名 / xlsx 落盘 / 渲染失败降级 partial）；
 - 打印区域计算（T8 两口径）与渲染目录清理（不留 print_area 污染产物）。
 
@@ -11,12 +12,15 @@
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import io
 import os
 import shutil
 import unittest
 from pathlib import Path
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from openpyxl import Workbook, load_workbook
 
 from app.core.identity import Identity
@@ -33,6 +37,19 @@ TEMPLATE = Path(__file__).parent / "fixtures" / "template_weekly.xlsx"
 
 def ident(uid: str = "1000", name: str = "devuser") -> Identity:
     return Identity(uid=uid, username=name, is_admin=False)
+
+
+def run_async(coro):
+    """在独立事件循环里跑协程。
+
+    不能直接用 asyncio.get_event_loop()：Python 3.10+ 在无运行循环时
+    会 DeprecationWarning / 3.12+ 直接抛错，单测进程里并不可靠。
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 class ExportTestBase(unittest.TestCase):
@@ -254,16 +271,170 @@ class TestTemplateBinding(ExportTestBase):
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("NO_TEMPLATE", str(ctx.exception.detail))
 
-    def test_delete_blocked_when_bound(self):
-        """有批次绑定时禁止删除 —— 否则历史周报无法再导出。"""
+    def test_delete_unbinds_instead_of_blocking(self):
+        """有批次绑定时：自动解绑后删除（v1.0.23 契约变更）。
+
+        原契约为「抛 409 拒绝删除」，出发点是怕历史周报无法再导出。
+        但这在真机上造成了死结：模板文件已被升级清空、DB 记录残留时，
+        409 让用户既删不掉、也传不上去（上传被判重复直接返回），
+        只能不断新增模板。实际影响可控：
+        历史批次的产品已入库；无绑定时 resolve_template 会回落到该用户最新版模板，
+        并不会让历史周报导出失败。
+
+        故改为：先解绑 → 再删记录 → 再删文件，全程不留脏数据。
+        """
         row = TemplateVersion(owner_uid=self.me.uid, filename="t.xlsx", stored_path=str(TEMPLATE), md5="d" * 32, size=1, version=1)
         self.db.add(row)
         self.db.commit()
         rep = self.make_report()
         ES.bind_template(self.db, self.me, rep, row.id)
+        self.assertEqual(rep.template_id, row.id)
+
+        ES.delete_template(self.db, self.me, row.id)
+
+        # 记录已删、绑定已解
+        self.assertIsNone(self.db.get(TemplateVersion, row.id))
+        self.db.refresh(rep)
+        self.assertIsNone(rep.template_id)
+        # 越权红线不受影响：别人的模板仍删不掉
+        other = TemplateVersion(owner_uid="9999", filename="x.xlsx", stored_path=str(TEMPLATE), md5="f" * 32, size=1, version=1)
+        self.db.add(other)
+        self.db.commit()
         with self.assertRaises(HTTPException) as ctx:
-            ES.delete_template(self.db, self.me, row.id)
-        self.assertEqual(ctx.exception.status_code, 409)
+            ES.delete_template(self.db, self.me, other.id)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
+@unittest.skipUnless(TEMPLATE.is_file(), "缺少真实模板基准")
+class TestTemplatePersistence(ExportTestBase):
+    """模板「文件 ↔ 记录」一致性回归（v1.0.23 修复的事故）。
+
+    真机事故链：DATA_DIR 曾指向安装目录 ${TRIM_APPDEST}/share（升级清空），
+    而数据库在 ${TRIM_PKGVAR}（升级保留）→ 升级后必然出现
+    「记录在、文件没了」→ 用户删不掉（外键/409）、重复上传被判重复而无效。
+    以下用例逐条钉住修复后的行为，防止同类回归。
+    """
+
+    def _bytes(self) -> bytes:
+        return TEMPLATE.read_bytes()
+
+    def _upload(self, note: str = ""):
+        """走真实上传入口（结构校验 → 落盘 → 查重 → 入库）。"""
+        return run_async(
+            ES.upload_template(
+                self.db, self.me,
+                UploadFile(filename=TEMPLATE.name, file=io.BytesIO(self._bytes())),
+                note,
+            )
+        )
+
+    def test_upload_persists_file_to_disk(self):
+        """1) 模板文件真正落盘，且重启后仍可访问。"""
+        r = self._upload()
+        tpl = r["template"]
+        p = Path(tpl["id"] and self.db.get(TemplateVersion, tpl["id"]).stored_path)
+        self.assertTrue(p.is_file(), f"模板文件未落盘: {p}")
+        self.assertEqual(p.read_bytes(), self._bytes())
+        # 文件名即 md5，便于按内容精确定位（自愈策略 2）
+        self.assertEqual(p.name, f"{self.db.get(TemplateVersion, tpl['id']).md5}.xlsx")
+
+    def test_reupload_after_file_vanished_repairs_it(self):
+        """3) 核心回归：文件被清空后重新上传同一模板，必须把文件补回来。"""
+        first = self._upload()["template"]
+        stored = Path(self.db.get(TemplateVersion, first["id"]).stored_path)
+        # 模拟升级清空安装目录：文件没了，记录还在
+        stored.unlink()
+        self.assertFalse(stored.is_file())
+        self.assertIsNotNone(self.db.get(TemplateVersion, first["id"]))
+
+        again = self._upload()
+
+        # 复用同一记录（不新增版本），且文件已修复
+        self.assertEqual(again["template"]["id"], first["id"])
+        self.assertTrue(again["duplicated"])
+        self.assertTrue(stored.is_file(), "重复上传后模板文件仍未修复 —— 用户将永远无法恢复")
+        self.assertEqual(stored.read_bytes(), self._bytes())
+        self.assertEqual(
+            self.db.query(TemplateVersion).filter(TemplateVersion.owner_uid == self.me.uid).count(), 1
+        )
+
+    def test_reupload_repairs_stale_path(self):
+        """文件存在但 DB 指向旧路径（升级前安装目录）时，重传应把路径校准回来。"""
+        first = self._upload()["template"]
+        row = self.db.get(TemplateVersion, first["id"])
+        row.stored_path = "/nonexistent/legacy/templates/old.xlsx"
+        self.db.commit()
+
+        self._upload()
+
+        row = self.db.get(TemplateVersion, first["id"])
+        self.assertTrue(Path(row.stored_path).is_file(), "stale stored_path 未被校准")
+        self.assertEqual(row.size, len(self._bytes()))
+
+    def test_delete_removes_both_record_and_file(self):
+        """2) 删除模板时记录与文件同步清理，不留脏数据。"""
+        r = self._upload()["template"]
+        row = self.db.get(TemplateVersion, r["id"])
+        stored = Path(row.stored_path)
+        self.assertTrue(stored.is_file())
+
+        ES.delete_template(self.db, self.me, r["id"])
+
+        self.assertIsNone(self.db.get(TemplateVersion, r["id"]))
+        self.assertFalse(stored.is_file(), "删记录后模板文件残留 → 孤儿文件会被 _rebuild 重新登记")
+
+    def test_delete_succeeds_even_when_file_already_missing(self):
+        """文件已丢失时也必须删得掉 —— 这正是用户被卡住的那个死结。"""
+        r = self._upload()["template"]
+        row = self.db.get(TemplateVersion, r["id"])
+        Path(row.stored_path).unlink()
+
+        ES.delete_template(self.db, self.me, r["id"])  # 不应抛异常
+
+        self.assertIsNone(self.db.get(TemplateVersion, r["id"]))
+
+    def test_version_no_collision_after_delete(self):
+        """版本号取 max+1：删掉中间版本后新模板不得与现存版本撞号。
+
+        回归点：原实现用「记录条数 + 1」算版本号，删过模板后条数变小，
+        新模板会与现存记录撞号（界面出现两个 v2）。
+        """
+        # 造一条 version=5 的记录，再删掉它，制造版本空洞
+        a = self._upload()["template"]
+        row = self.db.get(TemplateVersion, a["id"])
+        row.version = 5
+        self.db.commit()
+        ES.delete_template(self.db, self.me, a["id"])
+        self.assertEqual(
+            self.db.query(TemplateVersion).filter(TemplateVersion.owner_uid == self.me.uid).count(), 0
+        )
+
+        # 全新上传：max 为空 → 应得 v1，而不是「条数+1」之外的任何错值
+        again = self._upload()["template"]
+        self.assertEqual(again["version"], 1)
+
+        # 再造空洞：把这条设成 v5 后删掉，然后上传一个**内容不同**的模板
+        row2 = self.db.get(TemplateVersion, again["id"])
+        keep = self._upload()["template"]  # 同内容复用同一条记录
+        self.assertEqual(keep["id"], again["id"])
+        row2.version = 5
+        self.db.commit()
+
+        # 构造内容不同但结构仍合格的模板（改一个非锚点单元格的值）
+        wb = load_workbook(TEMPLATE)
+        ws = wb[wb.sheetnames[0]]
+        ws["A1"] = "变体模板"
+        buf = io.BytesIO()
+        wb.save(buf)
+        data = buf.getvalue()
+        self.assertNotEqual(hashlib.md5(data).hexdigest(), row2.md5)
+
+        r2 = run_async(
+            ES.upload_template(self.db, self.me, UploadFile(filename="variant.xlsx", file=io.BytesIO(data)))
+        )
+        # max=5 → 应得 6；若仍按「记录条数+1」则会得 2，与现存 v5 不冲突但顺序错乱
+        self.assertEqual(r2["template"]["version"], 6)
+        self.assertNotEqual(r2["template"]["id"], again["id"])
 
 
 @unittest.skipUnless(TEMPLATE.is_file(), "缺少真实模板基准")

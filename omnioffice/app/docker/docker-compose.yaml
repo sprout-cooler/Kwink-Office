@@ -1,7 +1,14 @@
 # Docker 编排（V10 8.7）：api / worker / postgres / redis 四服务。
 # 关键挂载：api 必须挂 ${TRIM_APPDEST} 到 /host 以创建网关 Socket（app.sock）；
 # 数据库/缓存挂 ${TRIM_PKGVAR}（应用运行时数据目录，升级保留）；
-# 用户文件（原图/模板/导出）挂 ${TRIM_APPDEST}/share（安装 target 下的共享目录）。
+# 用户文件（原图/模板/导出）挂 ${TRIM_PKGVAR}/data —— **必须是 PKGVAR，不能是 APPDEST**。
+#
+# v1.0.23 修复（模板文件丢失事故）：
+#   原挂载是 ${TRIM_APPDEST}/share:/data，而 TRIM_APPDEST 是**安装目录 target**，
+#   fnOS 升级/重装会整目录清空；但数据库挂在 ${TRIM_PKGVAR} 升级保留。
+#   于是升级后必然出现「DB 模板记录还在、模板文件已被清空」的脏状态：
+#   用户既删不掉（被批次绑定 409），又传不上去（同 md5 被判重复直接返回），
+#   只能不断新增模板。数据目录必须与数据库同处 TRIM_PKGVAR，同生共死。
 services:
   api:
     build:
@@ -13,7 +20,10 @@ services:
       - GATEWAY_PREFIX=/app/omnioffice
       - SOCKET_PATH=/host/app.sock
       - DATA_DIR=/data
-      - APP_VERSION=${APP_VERSION:-1.0.21}
+      # 历史遗留目录：升级前模板/原图落在安装目录下，升级时被清空。
+      # 保留只读挂载，让服务端能把仍在的旧文件搬进新目录（一次性迁移）。
+      - LEGACY_DATA_DIR=/legacy-data
+      - APP_VERSION=${APP_VERSION:-1.0.23}
       - DATABASE_URL=postgresql://omnioffice:omnioffice@postgres:5432/omnioffice
       - REDIS_URL=redis://redis:6379/0
       - LLM_API_KEY=${llm_api_key}
@@ -22,7 +32,8 @@ services:
       - LLM_MODEL=${llm_model}
     volumes:
       - ${TRIM_APPDEST}:/host
-      - ${TRIM_APPDEST}/share:/data
+      - ${TRIM_PKGVAR}/data:/data
+      - ${TRIM_APPDEST}/share:/legacy-data:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,7 +56,8 @@ services:
       - LLM_BASE_URL_CUSTOM=${llm_base_url_custom}
       - LLM_MODEL=${llm_model}
     volumes:
-      - ${TRIM_APPDEST}/share:/data
+      - ${TRIM_PKGVAR}/data:/data
+      - ${TRIM_APPDEST}/share:/legacy-data:ro
     depends_on:
       postgres:
         condition: service_healthy

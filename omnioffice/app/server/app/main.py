@@ -615,6 +615,13 @@ def spa(full_path: str, request: Request):
 @app.on_event("startup")
 def on_startup():
     init_db()
+    # 一次性数据迁移：把升级前落在安装目录下的模板/原图搬进持久目录（v1.0.23）
+    try:
+        from .modules.weekly_report.export_service import migrate_legacy_data
+
+        migrate_legacy_data()
+    except Exception as e:  # noqa: BLE001
+        print(f"[migrate] 旧数据迁移跳过（不影响启动）: {type(e).__name__}: {e}", flush=True)
     # 安装向导注入的值写入 DB（仅当 DB 无值，不覆盖用户后续修改）
     _inject_wizard()
     # 识别队列：worker 线程挂当前事件循环，进度经 WS 广播

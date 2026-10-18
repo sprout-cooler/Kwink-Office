@@ -16,8 +16,13 @@ class Settings:
     # Unix Socket 路径（真机形态）；为空表示 TCP 形态（本地联调）
     socket_path: str = os.environ.get("SOCKET_PATH", "")
     tcp_port: int = int(os.environ.get("PORT", "8787"))
-    # 业务数据目录：真机挂共享目录 ${TRIM_APPDEST}/share；本地为项目内 data/
+    # 业务数据目录：真机挂 ${TRIM_PKGVAR}/data（升级保留）；本地为项目内 data/
+    # v1.0.23：原先挂 ${TRIM_APPDEST}/share（安装目录 target），升级必被清空，
+    # 与数据库（PKGVAR，升级保留）不同命 → 模板文件丢失但记录残留。已改为与库同命。
     data_dir: str = os.environ.get("DATA_DIR", "data")
+    # 历史遗留数据目录（只读）：升级前的模板/原图曾落在安装目录下。
+    # 启动时做一次性迁移，把仍在的旧文件搬进 data_dir，搬完即失效。
+    legacy_data_dir: str = os.environ.get("LEGACY_DATA_DIR", "")
     # 版本号：与 manifest version 由打包体检强制一致（避坑指南 §1.3）
     app_version: str = os.environ.get("APP_VERSION", "1.0.0")
     # 身份来源：gateway=网关 X-Trim-* 头（真机/假网关）；mock=本地开发固定身份

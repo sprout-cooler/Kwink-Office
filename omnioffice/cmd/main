@@ -10,6 +10,11 @@ COMPOSE_CANDIDATES=(
 )
 PROJECT_NAME="omnioffice"
 
+# v1.0.23：用户数据目录必须是 ${TRIM_PKGVAR}/data —— 与数据库同命，升级保留。
+# 原先建在 ${TRIM_APPDEST}/share（安装 target），升级必被清空，导致模板文件丢失、
+# 而 DB 记录残留，用户既删不掉也传不上去。**禁止再往安装目录下建数据目录。**
+DATA_ROOT="${TRIM_PKGVAR}/data"
+
 resolve_compose() {
   for f in "${COMPOSE_CANDIDATES[@]}"; do
     if [ -f "$f" ]; then
@@ -31,7 +36,17 @@ compose() {
 
 case "$1" in
   start)
-    mkdir -p "${TRIM_APPDEST}/share/uploads" "${TRIM_APPDEST}/share/exports" "${TRIM_APPDEST}/share/templates"
+    # mkdir 失败不能中断启动（容器内也会 ensure_dir），
+    # 但必须落日志 —— 目录建不出来会直接导致上传/导出失败。
+    if ! mkdir -p "${DATA_ROOT}/uploads" "${DATA_ROOT}/exports" "${DATA_ROOT}/templates"; then
+      echo "failed to create data dirs under ${DATA_ROOT}" >> "$TRIM_TEMP_LOGFILE"
+    fi
+    # 旧安装目录下的遗留数据：仅当新目录为空时才搬，避免覆盖用户现有文件。
+    # compose 已把旧目录只读挂到 /legacy-data，服务启动时会再做一次幂等迁移。
+    if [ -d "${TRIM_APPDEST}/share" ] && [ -z "$(ls -A "${DATA_ROOT}/templates" 2>/dev/null)" ]; then
+      cp -rn "${TRIM_APPDEST}/share/." "${DATA_ROOT}/" 2>/dev/null \
+        && echo "legacy data migrated from ${TRIM_APPDEST}/share" >> "$TRIM_TEMP_LOGFILE"
+    fi
     compose up -d
     ;;
   stop)

@@ -76,7 +76,7 @@ async function doUpload(f: File) {
   try {
     const r = await weeklyApi.uploadTemplate(f);
     if (r.duplicated) {
-      ElMessage.info("该模板已上传过（内容完全相同），已为你选中");
+      ElMessage.info("该模板内容此前已上传过，文件已确认就位并为你选中");
     } else {
       ElMessage.success(`模板「${f.name}」已上传（v${r.template.version}）`);
     }
@@ -104,7 +104,8 @@ async function bind() {
 async function removeTemplate(t: TemplateItem) {
   try {
     await ElMessageBox.confirm(
-      `确定删除模板「${t.filename}」（v${t.version}）？若已有周报批次绑定它，会被拒绝。`,
+      `确定删除模板「${t.filename}」（v${t.version}）？模板文件会一并删除；`
+        + `若已有周报批次绑定它，会自动解除绑定（下次导出改用最新版模板）。`,
       "删除模板",
       { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" },
     );
@@ -114,7 +115,7 @@ async function removeTemplate(t: TemplateItem) {
   try {
     await weeklyApi.removeTemplate(t.id);
     if (boundId.value === t.id) boundId.value = null;
-    ElMessage.success("已删除");
+    ElMessage.success("已删除（记录与模板文件已一并清理）");
     await refreshAll();
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
