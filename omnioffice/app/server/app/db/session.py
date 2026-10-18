@@ -27,6 +27,28 @@ def _resolve_url() -> str:
 URL = _resolve_url()
 _connect_args = {"check_same_thread": False} if URL.startswith("sqlite") else {}
 engine = create_engine(URL, connect_args=_connect_args, future=True)
+
+if URL.startswith("sqlite"):
+    # **让 SQLite 与真机 PostgreSQL 的外键行为一致**（v1.0.25 加固）。
+    #
+    # 真机事故（v1.0.24）：删模板必 500，报
+    #   export_artifacts_template_id_fkey  violates foreign key constraint
+    # 而 211 项单测全绿 —— 因为 SQLite **默认不强制外键**
+    # （PRAGMA foreign_keys 默认 OFF），删主表时依赖表里残留引用也照删不误。
+    # 也就是说测试环境根本没有复现真机约束的能力，这类缺陷必然漏到真机才炸。
+    #
+    # 该 PRAGMA 是**连接级**的，不能写在 connect_args 里（那是驱动参数），
+    # 必须对每个新连接执行 —— 用 pool 监听器保证任意连接都生效。
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_enable_foreign_keys(dbapi_conn, _conn_record) -> None:  # noqa: ANN001
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cur.close()
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
 
 

@@ -27,7 +27,7 @@ from typing import Any, Sequence
 from fastapi import HTTPException, UploadFile
 from openpyxl import load_workbook
 from sqlalchemy import func, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ...core import audit
@@ -420,34 +420,23 @@ def latest_template(db: Session, identity: Identity) -> TemplateVersion | None:
 def delete_template(db: Session, identity: Identity, template_id: int) -> None:
     """删除模板：**记录与文件同步清理**，不留脏数据。
 
-    v1.0.23 修复（此前只删 DB 记录，文件留在盘上）：
-    1. 删记录不删文件 → 孤儿 xlsx 堆积；更糟的是 `_rebuild_template_record`
-       会把孤儿文件重新登记成记录，用户「删了又出现」；
-    2. 文件已丢失时仍抛 409（TEMPLATE_IN_USE）让用户无路可走 ——
-       记录在、文件没了的场景下，卡住删除毫无意义（导出本来就已不可用），
-       改为允许删除并顺带清理绑定。
+    v1.0.25 修复（此前删模板必 500，真机日志实证）：
+    `DELETE FROM template_versions WHERE id=?` 撞 `export_artifacts_template_id_fkey`
+    （psycopg.errors.ForeignKeyViolation → SQLAlchemy IntegrityError → 500）。
 
-    顺序：先删文件 → 再删记录。文件删不掉（权限/占用）不阻断删记录，
-    否则用户会被永久卡在「有记录但删不了」的死结里（正是本次事故的现象）。
-    """
+    根因是**漏解绑了一张引用表**：
+      - `Report.template_id`     —— 普通 Integer 列，**没有外键**，解绑它纯属习惯性防御；
+      - `ExportArtifact.template_id` —— **真外键** ForeignKey("template_versions.id")，
+        v1.0.23 只处理了前者，导出历史里每条产物都指向模板 → 一删必炸。
+
+    参照 kwinkstock（app/server/src/modules/tags.ts:99-100）的范式：
+    **先清引用表，再删主表**，一步事务内完成。
+
+    为什么 211 项单测全绿：测试库是 SQLite，而 SQLite **默认不开启外键强制**
+    （PRAGMA foreign_keys 默认 OFF，session.py 未显式打开），删主表照删不误；
+    真机 PostgreSQL 才严格校验。本地测试永远抓不到这类问题。
+    """  # noqa: E501
     t = _owned_template(db, identity, template_id)
-
-    # v1.0.23：Report.template_id 是指向 template_versions.id 的外键，
-    # 直接删模板会撞数据库外键约束（PG: update or delete on table violates foreign key）。
-    # 原实现用 409 拦住是安全的，但代价是「记录在、文件已丢」时用户彻底删不掉。
-    # 现在改为**先解绑再删除**：解绑只影响绑定关系，历史批次的导出产物已在库里，
-    # 且 resolve_template 在无绑定时会回落到该用户最新模板，不会让历史周报导出失败。
-    unbound = db.scalars(
-        select(Report).where(Report.owner_uid == identity.uid, Report.template_id == template_id)
-    ).all()
-    for r in unbound:
-        r.template_id = None
-    if unbound:
-        db.commit()
-        print(
-            f"[export] 模板删除前解绑 {len(unbound)} 个周报批次: templateId={template_id}",
-            flush=True,
-        )
 
     # 该 md5 是否还有其他记录在用（正常不会，md5 已去重；防御性检查）
     md5 = t.md5
@@ -458,18 +447,94 @@ def delete_template(db: Session, identity: Identity, template_id: int) -> None:
             TemplateVersion.id != template_id,
         ).limit(1)
     )
+
+    # ---- 解绑所有引用源，全部在**同一事务**内完成 ----
+    # ① ExportArtifact.template_id：真外键，不解绑就必 500（本次事故根因）
+    artifacts = db.scalars(
+        select(ExportArtifact).where(
+            ExportArtifact.owner_uid == identity.uid,
+            ExportArtifact.template_id == template_id,
+        )
+    ).all()
+    for a in artifacts:
+        # 导出产物本身（xlsx/png 文件）必须保留 —— 它是用户实打实的历史成果，
+        # 这里只断开「用了哪个模板版本」的引用，让导出历史仍可查看。
+        a.template_id = None
+
+    # ② Report.template_id：当前无外键，但语义上是绑定关系，一并断开
+    reports = db.scalars(
+        select(Report).where(
+            Report.owner_uid == identity.uid,
+            Report.template_id == template_id,
+        )
+    ).all()
+    for r in reports:
+        r.template_id = None
+
+    if artifacts or reports:
+        print(
+            f"[export] 模板删除前解绑: templateId={template_id} "
+            f"导出产物 {len(artifacts)} 条、周报批次 {len(reports)} 条",
+            flush=True,
+        )
+
+    # 关键：解绑必须**先落库**，不能指望跟DELETE 在同一次 flush 里排序正确。
+    # 实测（SQLite 开PRAGMA foreign_keys=ON 后复现）：同一个 session 内先改
+    # artifact.template_id=None、再 db.delete(t)，ORM 会把
+    # `UPDATE export_artifacts` 与 `DELETE FROM template_versions` 放进**同一次**
+    # flush，而单元内的语句顺序由 mapper 依赖图决定 —— 实测 DELETE 先于 UPDATE
+    # 执行，于是照样触发 FOREIGN KEY constraint failed。
+    # 显式 commit 解绑，确保「引用已清」这件事先成为既成事实。
+    if artifacts or reports:
+        db.commit()
+
+    # ---- 先删记录，再删文件 ----
+    #
+    # 顺序刻意与 v1.0.23 相反：v1.0.23 是「先删文件 → 再删记录」，一旦第2 步被
+    # 外键拒绝，文件已经删掉而记录还在 —— 真机正是这个状态（templates/ 空、
+    # DB 里 2 条模板记录齐全），即「记录在、文件没了」的脏数据复发。
+    # 现在改为记录删除**提交成功**后才动文件，任何一步失败都不会留下半成品。
+    try:
+        db.delete(t)
+        db.commit()
+    except IntegrityError as e:
+        # 兜底：万一还有未预见到的引用源，翻译成可行动提示，而不是裸 500。
+        # 事务必须回滚，否则后续任何查询都会报 current transaction is aborted。
+        db.rollback()
+        detail = (
+            f"模板 id={template_id}\n"
+            f"错误: {type(e).__name__}: {e}\n"
+            f"当前 uid: {_diag_uid()}"
+        )
+        print(f"[export] 模板删除失败(外键/约束) id={template_id}: {e}", flush=True)
+        _diag_trace("模板删除失败 · 存在未解绑的引用", detail)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "TEMPLATE_IN_USE",
+                "message": "该模板仍被历史数据引用，无法删除。请到「导出历史」中确认，"
+                           "或先清理相关记录后重试",
+                "diagLog": _diag_path(),
+            },
+        ) from None
+
+    # ---- 记录已删除，现在安全地清理文件 ----
     file_deleted = False
     if shared is None:
         file_deleted = _remove_template_file(t)
     else:
         print(f"[export] 模板文件被其他记录共用，保留文件: {md5}", flush=True)
 
-    db.delete(t)
-    db.commit()
     audit.log(
         "template.delete",
         identity.uid,
-        {"id": template_id, "md5": md5[:8], "fileDeleted": file_deleted},
+        {
+            "id": template_id,
+            "md5": md5[:8],
+            "fileDeleted": file_deleted,
+            "unboundArtifacts": len(artifacts),
+            "unboundReports": len(reports),
+        },
     )
     if not file_deleted and shared is None:
         print(

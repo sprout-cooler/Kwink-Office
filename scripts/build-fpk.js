@@ -186,6 +186,39 @@ function writeManifestVersion(manifestPath, newV) {
 }
 
 /**
+ * 把 compose 里的 APP_VERSION 兜底值同步为同一个版本号。
+ *
+ * 为什么必须做（2026-10-18 修）：`check-fpk.mjs` 有「版本号三处一致性」门禁，
+ * 要求 manifest.version === compose 的 `APP_VERSION=${APP_VERSION:-X.Y.Z}`。
+ * 但门禁在 package-fpk.ps1 里排在 fnpack **之前**，而版本号是在 fnpack 阶段
+ * 由本脚本才递增的 —— 于是：
+ *   1) 门禁校验的是**递增前**的 manifest 与上轮遗留的 compose 值；
+ *   2) 本脚本递增 manifest 后从不同步 compose；
+ *   3) 结果：每打完一版二者必然失配，**下一版打包必被门禁拦死**
+ *      （实测报 `manifest=1.0.24，docker-compose APP_VERSION 兜底=1.0.23`）。
+ *
+ * 同理，递增后也要把 manifest 回滚成本轮起始值吗？不需要 —— 门禁只跑一次，
+ * 且下轮开始时二者已被本函数同步过，天然一致。
+ */
+function syncComposeVersion(packDir, newV) {
+  const p = path.join(packDir, "app", "docker", "docker-compose.yaml");
+  if (!fs.existsSync(p)) {
+    console.log(`ℹ️未找到 compose，跳过版本同步: ${p}`);
+    return;
+  }
+  const text = fs.readFileSync(p, "utf8");
+  const re = /(APP_VERSION=\$\{APP_VERSION:-)([\d.]+)(\})/;
+  const m = text.match(re);
+  if (!m) {
+    console.error("❌ compose 中未找到 APP_VERSION 兜底值，无法同步版本号");
+    process.exit(1);
+  }
+  if (m[2] === newV) return;
+  fs.writeFileSync(p, text.replace(re, `$1${newV}$3`), "utf8");
+  console.log(`↻ compose APP_VERSION 兜底值同步: ${m[2]} → ${newV}`);
+}
+
+/**
  * 把 manifest 里的 version 递增后写回，并返回 { oldV, newV }。
  * level: "patch" | "minor" | "major"
  */
@@ -361,6 +394,9 @@ function build(packDir, opts) {
 
   // 1c) 校验通过，写回 manifest —— 每个 fpk 都带唯一新版本
   writeManifestVersion(manifestPath, bump.newV);
+  // 同步 compose 兜底值：否则下一版打包会被 check-fpk.mjs 的版本一致性门禁拦死
+  // （门禁跑在 fnpack 之前，比较的是本轮递增后的 manifest 与上轮遗留的 compose 值）
+  syncComposeVersion(dir, bump.newV);
   console.log(`🔖 版本号 ${bump.oldV} → ${bump.newV}（已写回 manifest，禁止复用旧版本号）`);
 
   // 2) 用便携 fnpack 打包

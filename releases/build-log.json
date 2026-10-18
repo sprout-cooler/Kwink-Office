@@ -52,5 +52,14 @@
     "fpk": "omnioffice_1.0.24_all_20261018.fpk",
     "commit": null,
     "note": "修复模板文件丢失与重复上传缺陷：数据目录改为 TRIM_PKGVAR 与库同命、重复上传修复丢失文件、删除同步清文件并自动解绑、版本号取max+1"
+  },
+  {
+    "ts": "2026-10-18T05:35:11.901Z",
+    "appname": "omnioffice",
+    "version": "1.0.25",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.25_all_20261018.fpk",
+    "commit": null,
+    "note": "修复删除模板500：解绑 ExportArtifact 真外键引用，解绑先提交再删主表，记录删除成功后才清文件，IntegrityError 兜底转 409；SQLite 打开 PRAGMA foreign_keys 使测试环境与真机 PG 约束一致；build-fpk 递增版本时同步 compose 兜底值修复门禁必然失配"
   }
 ]

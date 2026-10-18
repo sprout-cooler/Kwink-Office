@@ -105,7 +105,8 @@ async function removeTemplate(t: TemplateItem) {
   try {
     await ElMessageBox.confirm(
       `确定删除模板「${t.filename}」（v${t.version}）？模板文件会一并删除；`
-        + `若已有周报批次绑定它，会自动解除绑定（下次导出改用最新版模板）。`,
+        + `若已有周报批次或导出历史引用它，会自动解除绑定`
+        + `（导出历史与已生成的文件保留，下次导出改用最新版模板）。`,
       "删除模板",
       { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" },
     );
