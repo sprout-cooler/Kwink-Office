@@ -29,30 +29,52 @@ PKG = ROOT / "omnioffice"
 TRASH = ROOT / ".build-trash"
 
 # (相对路径, 清理理由)
+#
+# ⚠️ __pycache__ 曾用硬编码清单逐个列出，结果新增业务模块时（v1.0.26 的
+# image_tool）该目录不在清单里，字节码被原样打进 FPK —— 门禁当时也没报，
+# 因为它只检查了「已登记的路径」。**新增模块必须零改动**，故改为运行时递归发现。
+# node_modules 仍是固定路径（只有一个，且必须整体移出）。
 TARGETS = [
     (PKG / "app" / "web" / "node_modules", "前端依赖，产物已构建进 server/public"),
-    (PKG / "app" / "server" / "app" / "__pycache__", "Python 字节码，容器内自动重建"),
-    (PKG / "app" / "server" / "app" / "core" / "__pycache__", "同上"),
-    (PKG / "app" / "server" / "app" / "db" / "__pycache__", "同上"),
-    (PKG / "app" / "server" / "app" / "modules" / "__pycache__", "同上"),
-    (PKG / "app" / "server" / "app" / "modules" / "weekly_report" / "__pycache__", "同上"),
-    (PKG / "app" / "server" / "app" / "tests" / "__pycache__", "同上"),
 ]
+
+
+def _discover_targets() -> list[tuple[Path, str]]:
+    """运行时发现全部 __pycache__（含未来新增模块目录），与 TARGETS 合并去重。"""
+    found = list(TARGETS)
+    server_app = PKG / "app" / "server"
+    if server_app.is_dir():
+        for p in sorted(server_app.rglob("__pycache__")):
+            if p.is_dir():
+                found.append((p, "Python 字节码，容器内自动重建"))
+    return found
+
+
+def all_targets() -> list[tuple[Path, str]]:
+    """slim() 与 restore() 共用同一份清单，保证两者的 key 生成规则严格对称。"""
+    return _discover_targets()
 
 
 def count_files(p: Path) -> int:
     return sum(1 for f in p.rglob("*") if f.is_file())
 
 
+def _trash_key(target: Path) -> str:
+    """暂存区键名：由「相对包根路径」生成，slim / restore 共用同一函数。
+
+    刻意用相对 PKG（而不是相对 server 根）：node_modules 不在 server 之下，
+    用 server 做根会直接抛 ValueError。
+    """
+    rel = target.relative_to(PKG)
+    return str(rel).replace("/", "_").replace("\\", "_")
+
+
 def restore() -> None:
     if not TRASH.is_dir():
         print("打包瘦身：无暂存内容，无需恢复")
         return
-    # 暂存键 -> 原路径（与 slim() 的 key 生成规则严格对称）
-    for target, _ in TARGETS:
-        key = "web_node_modules" if target.name == "node_modules" else str(
-            target.relative_to(PKG / "app" / "server")
-        ).replace("/", "_").replace("\\", "_")
+    for target, _ in all_targets():
+        key = _trash_key(target)
         saved = TRASH / key
         if not saved.is_dir():
             continue
@@ -73,14 +95,11 @@ def slim() -> None:
     TRASH.mkdir(exist_ok=True)
     moved = 0
     total = 0
-    for target, reason in TARGETS:
+    for target, reason in all_targets():
         if not target.exists():
             continue
         n = count_files(target)
-        # __pycache__ 统一收纳到暂存区并保持可辨识；node_modules 单独一项
-        key = "web_node_modules" if target.name == "node_modules" else str(
-            target.relative_to(PKG / "app" / "server")
-        ).replace("/", "_").replace("\\", "_")
+        key = _trash_key(target)
         saved = TRASH / key
         if saved.exists():
             print(f"  跳过（暂存区已有同名项）：{key}")

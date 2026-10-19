@@ -38,6 +38,20 @@ MODULES: tuple[ModuleMeta, ...] = (
             ModuleTab("export", "预览与导出"),
         ),
     ),
+    ModuleMeta(
+        id="image_tool",
+        display_name="图片处理",
+        icon="image-tool",
+        route="/image-tool",
+        tabs=(
+            ModuleTab("convert", "格式转换"),
+            ModuleTab("stitch", "图片拼接"),
+            ModuleTab("compress", "图片压缩"),
+            ModuleTab("ocr", "文字识别"),
+            ModuleTab("edit", "图片编辑"),
+            ModuleTab("gallery", "我的图库"),
+        ),
+    ),
 )
 
 

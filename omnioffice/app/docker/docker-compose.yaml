@@ -23,7 +23,7 @@ services:
       # 历史遗留目录：升级前模板/原图落在安装目录下，升级时被清空。
       # 保留只读挂载，让服务端能把仍在的旧文件搬进新目录（一次性迁移）。
       - LEGACY_DATA_DIR=/legacy-data
-      - APP_VERSION=${APP_VERSION:-1.0.25}
+      - APP_VERSION=${APP_VERSION:-1.0.26}
       - DATABASE_URL=postgresql://omnioffice:omnioffice@postgres:5432/omnioffice
       - REDIS_URL=redis://redis:6379/0
       - LLM_API_KEY=${llm_api_key}

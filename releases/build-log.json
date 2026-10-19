@@ -61,5 +61,23 @@
     "fpk": "omnioffice_1.0.25_all_20261018.fpk",
     "commit": null,
     "note": "修复删除模板500：解绑 ExportArtifact 真外键引用，解绑先提交再删主表，记录删除成功后才清文件，IntegrityError 兜底转 409；SQLite 打开 PRAGMA foreign_keys 使测试环境与真机 PG 约束一致；build-fpk 递增版本时同步 compose 兜底值修复门禁必然失配"
+  },
+  {
+    "ts": "2026-10-19T01:20:31.659Z",
+    "appname": "omnioffice",
+    "version": "1.0.26",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.26_all_20261019.fpk",
+    "commit": null,
+    "note": "新增图片处理模块 image_tool：格式转换/拼接/压缩/OCR 四大核心能力 + 图片编辑/我的图库/能力清单；Pillow 为唯一新增依赖；能力文件解耦可独立调用，统一 ImageToolError 异常契约"
+  },
+  {
+    "ts": "2026-10-19T01:24:55.395Z",
+    "appname": "omnioffice",
+    "version": "1.0.26",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.26_all_20261019.fpk",
+    "commit": null,
+    "note": "新增图片处理模块 image_tool：格式转换/拼接/压缩/OCR 四大核心能力 + 图片编辑/我的图库/能力清单；Pillow 为唯一新增依赖；能力文件解耦可独立调用，统一 ImageToolError 异常契约；slim 与打包门禁改为递归发现 __pycache__，修新增模块字节码被打进 FPK 的缺陷"
   }
 ]

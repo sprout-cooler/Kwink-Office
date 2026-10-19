@@ -27,6 +27,7 @@ from .core.identity import get_identity, get_provider
 from .db.deps import get_db
 from .db.session import SessionLocal, init_db
 from .modules import registry
+from .modules.image_tool.router import router as image_tool_router
 from .modules.weekly_report import recognize_queue
 from .modules.weekly_report.router import router as weekly_report_router
 
@@ -526,6 +527,7 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
         return {"ok": ok, "message": msg, "model": model, "baseUrl": base_url}
 
     router.include_router(weekly_report_router, prefix="/weekly-report")
+    router.include_router(image_tool_router, prefix="/image-tool")
     app.include_router(router, prefix="/api")
     app.include_router(router, prefix=f"{settings.gateway_prefix}/api")
 

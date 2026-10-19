@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -170,6 +171,51 @@ class ExportArtifact(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     report: Mapped[Report] = relationship("Report")
+
+
+# ================================================================ 图片处理模块
+
+
+class ImageAsset(Base):
+    """图片处理模块的图片资产（用户上传原件 + 各能力产出的成品）。
+
+    设计要点（与周报模块同构，保证账号隔离零改造）：
+    - owner_uid 即数据归属键（应用账号 data_key），全表按账号隔离；
+    - 文件落 `${DATA_DIR}/images/<owner_uid>/<md5>.<ext>`，库里只存路径与元信息，
+      避免 DB 膨胀；**数据目录必须与数据库同命（TRIM_PKGVAR）**，否则升级即丢文件；
+    - kind 区分「原件上传」与「加工产物」，source_id 指向来源图，便于溯源与链式处理；
+    - meta 承载各能力的专属参数与结果（OCR 文本/坐标、压缩前后体积等），
+      用 JSON 列一次解决，避免为每个能力加一张表；
+    - source_id **刻意不建外键**：加工产物与原件是松耦合引用（原件被清理后产物仍应可用），
+      建外键会造成「删原件被产物卡死」，与 v1.0.25 踩过的外键坑同类，故只留普通列。
+    """
+
+    __tablename__ = "image_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # original（用户上传原件）| convert | stitch | compress | transform
+    kind: Mapped[str] = mapped_column(String(16), default="original", index=True, nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_path: Mapped[str] = mapped_column(Text, nullable=False)
+    md5: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    width: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 来源图 id（原件上传时为 0）
+    source_id: Mapped[int] = mapped_column(Integer, default=0, index=True, nullable=False)
+    # 能力专属参数与结果（OCR 文本/坐标、压缩前后体积等）
+    meta: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    @property
+    def file_missing(self) -> bool:
+        """记录在但文件已丢失（历史遗留/被外部清理），前端据此显示失效占位。"""
+        try:
+            return not self.stored_path or not Path(self.stored_path).is_file()
+        except OSError:
+            return True
 
 
 # ================================================================ 账号与数据隔离

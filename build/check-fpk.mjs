@@ -175,12 +175,29 @@ if (fs.existsSync(path.join(PKG, "wizard"))) {
 // 6.2 打包瘦身门禁：.dockerignore 只作用于 docker build，fnpack 打包不读它。
 // node_modules（1.2 万文件）与 __pycache__ 若在包内，app.tgz 会膨胀到 26MB+，
 // 真机 appcenter-cli 安装需解压上万文件。先执行 python build/slim_package.py。
+//
+// ⚠️ __pycache__ 必须**递归发现**而非硬编码清单：v1.0.26 新增 image_tool 模块时，
+// 其目录下的字节码既没被 slim 移走、也没被这道门禁发现，一路打进 FPK。
+// 硬编码清单的固有缺陷是「新增目录必然漏」，新增模块时才会暴露。
 {
-  const heavy = [
-    ["app/web/node_modules", "前端依赖（产物已构建进 server/public）"],
-    ["app/server/app/__pycache__", "Python 字节码（容器内自动重建）"],
-  ];
+  const heavy = [["app/web/node_modules", "前端依赖（产物已构建进 server/public）"]];
   const present = heavy.filter(([rel]) => fs.existsSync(path.join(PKG, rel)));
+
+  const walkPycache = (dir, out) => {
+    if (!fs.existsSync(dir)) return out;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (!e.isDirectory()) continue;
+      if (e.name === "node_modules" || e.name === ".git") continue;
+      if (e.name === "__pycache__") out.push(path.relative(PKG, p).replace(/\\/g, "/"));
+      else walkPycache(p, out);
+    }
+    return out;
+  };
+  for (const rel of walkPycache(path.join(PKG, "app", "server"), [])) {
+    present.push([rel, "Python 字节码（容器内自动重建）"]);
+  }
+
   must(
     present.length === 0,
     `以下目录会被打进 FPK：${present.map(([r, why]) => `${r} —— ${why}`).join("；")} —— 打包前请执行 python build/slim_package.py`,

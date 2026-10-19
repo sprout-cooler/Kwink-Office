@@ -6,3 +6,6 @@ sqlalchemy>=2.0.36
 # SQLAlchemy 2.0 对 postgresql:// 的默认驱动是 psycopg3（模块名 psycopg），
 # 不是 psycopg2！binary wheel 自带 libpq，无需系统编译环境（v1.0.5 Bad Gateway 根因）
 psycopg[binary]>=3.2,<4
+# 图片处理模块（v1.0.26）：格式转换 / 拼接 / 压缩 / OCR 前的图像预处理。
+# 纯 wheel（含 zlib/jpeg/webp 解码器），无需系统层安装，x86_64 与 ARM 均有轮子。
+Pillow>=10.4,<12
