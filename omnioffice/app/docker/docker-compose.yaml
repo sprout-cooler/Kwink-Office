@@ -9,8 +9,27 @@
 #   于是升级后必然出现「DB 模板记录还在、模板文件已被清空」的脏状态：
 #   用户既删不掉（被批次绑定 409），又传不上去（同 md5 被判重复直接返回），
 #   只能不断新增模板。数据目录必须与数据库同处 TRIM_PKGVAR，同生共死。
+# v1.0.28 修复（安装卡 80% 事故）：
+#   原来 api/worker 只有 build: 段 → fnOS 升级时 compose 现场冷构建镜像，
+#   而 Dockerfile 第 7 步 apt 装 LibreOffice 独占 345 秒，冷构建实测 9 分 15 秒，
+#   远超 fnOS 的 12.5 分钟升级超时（14:00:17 起每 30 秒轮询一次，共 25 次）
+#   → 14:12:47 被杀（exit status -1），UI 永远卡在 80%。
+#   修法：加 image: 段指向**预构建并已推送到 Docker Hub 的版本化镜像**。
+#   实测（Docker Compose v5.0.2，NAS 上对照实验）：
+#     image: + build: 并存且本地无该 tag 时 → compose **优先 pull 远端镜像**，
+#     实测日志 `Image kwink/kwinkguide:0.5.43 Pulling → Pulled`，未触发构建。
+#   实测 NAS 拉取 kwink/omnioffice:1.0.28 耗时 **2 分 44 秒**（vs 冷构建 9 分 15 秒）。
+#   build: 段保留作为**兜底**：镜像拉不动时 compose 会回退到本地构建，功能不中断。
+#
+#   ⚠️ image 的 tag 必须与 manifest.version 同版本（check-fpk.mjs 有门禁校验
+#      manifest.version === compose 的 APP_VERSION === compose 的 image tag），
+#      否则 NAS 拉到的镜像与包内前端产物版本不匹配。
+#      版本号由 scripts/build-fpk.js 在打包时统一递增并回写本文件
+#      （manifest + APP_VERSION 兜底值 + image tag 三处一起同步），
+#      因此**这里必须与当前 manifest.version 保持一致**，不要手改。
 services:
   api:
+    image: kwink/omnioffice:${APP_VERSION:-1.0.28}
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
@@ -23,7 +42,7 @@ services:
       # 历史遗留目录：升级前模板/原图落在安装目录下，升级时被清空。
       # 保留只读挂载，让服务端能把仍在的旧文件搬进新目录（一次性迁移）。
       - LEGACY_DATA_DIR=/legacy-data
-      - APP_VERSION=${APP_VERSION:-1.0.27}
+      - APP_VERSION=${APP_VERSION:-1.0.28}
       - DATABASE_URL=postgresql://omnioffice:omnioffice@postgres:5432/omnioffice
       - REDIS_URL=redis://redis:6379/0
       - LLM_API_KEY=${llm_api_key}
@@ -44,6 +63,7 @@ services:
         condition: service_started
 
   worker:
+    image: kwink/omnioffice:${APP_VERSION:-1.0.28}
     build:
       context: ..
       dockerfile: docker/Dockerfile.api

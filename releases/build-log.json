@@ -88,5 +88,14 @@
     "fpk": "omnioffice_1.0.27_all_20261025.fpk",
     "commit": null,
     "note": "新增经营大屏模块：客户/出差/财务/工作量双口径/选择性分享/腾讯地图后端代理"
+  },
+  {
+    "ts": "2026-10-25T13:57:51.579Z",
+    "appname": "omnioffice",
+    "version": "1.0.28",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.28_all_20261025.fpk",
+    "commit": null,
+    "note": "v1.0.28: 修复 fnOS 安装卡 80%（compose 改用 Docker Hub 预构建镜像 kwink/omnioffice，NAS 拉取 2m44s 替代 9m15s 冷构建）；新增 tools/build-image.sh 镜像构建推送脚本；版本同步与门禁覆盖 image tag"
   }
 ]

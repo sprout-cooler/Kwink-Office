@@ -1,8 +1,8 @@
-# Release helper: commit current tree, tag by manifest version, push both remotes.
+# Release helper: commit current tree, tag by manifest version, push all remotes.
 # Usage: powershell -ExecutionPolicy Bypass -File tools\release.ps1 [-Message "..."]
 # NOTE: ASCII-only file. Tokens are NOT stored here -- they live in the remote
 # URLs (.git/config), so this script is safe to commit and share.
-# Prereq: remotes "gitee" and "gitcode" already added (see git remote -v).
+# Prereq: remotes "gitee", "gitcode" and "github" already added (see git remote -v).
 
 $ErrorActionPreference = 'Stop'
 $proj = "e:\Project\FN\All-in-OneOffice"
@@ -32,9 +32,17 @@ if (-not $existing) {
     Write-Host "==> tag $tag already exists, skipping"
 }
 
-# 4) push both remotes with tags
-Write-Host "==> push gitee"
-git -C $proj push gitee main --tags
-Write-Host "==> push gitcode"
-git -C $proj push gitcode main --tags
+# 4) push all remotes with tags.
+#    gitee + gitcode are the long-standing mirrors; github was added in
+#    v1.0.28 (git@github.com:sprout-cooler/omnioffice.git, SSH key
+#    id_ed25519_fn_repos per ~/.ssh/config).
+$remotes = @("gitee", "gitcode", "github")
+foreach ($r in $remotes) {
+    if (-not (git -C $proj remote | Where-Object { $_ -eq $r })) {
+        Write-Host "==> remote '$r' not configured, skipping"
+        continue
+    }
+    Write-Host "==> push $r"
+    git -C $proj push $r main --tags
+}
 Write-Host "==> done ($tag)"

@@ -12,6 +12,8 @@ output/
 dist-archive/
 *.unpacked/
 *.tgz
+# 镜像构建中间产物（tools/build-image.sh 的本地暂存区，含数百 MB 的 OCI tar）
+.tmp-image/
 __pycache__/
 *.pyc
 .venv/

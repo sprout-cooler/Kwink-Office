@@ -70,6 +70,19 @@ if (manifest.version) {
       !!m && m[1] === manifest.version,
       `版本号不一致：manifest=${manifest.version}，docker-compose APP_VERSION 兜底=${m ? m[1] : "未找到"}`,
     );
+    // v1.0.28：compose 的 image tag 也必须与 manifest 同版本。
+    // api/worker 用 `image: kwink/omnioffice:${APP_VERSION:-X.Y.Z}` 指向 Docker Hub
+    // 上预构建的镜像（根治 fnOS 升级时现场冷构建 9 分钟导致的「安装卡 80%」）。
+    // 若 image tag 与 manifest 失配，NAS 会拉到上一个版本的镜像，
+    // 前端产物（随镜像分发）与包内版本不匹配，且本地没有该 tag 时
+    // compose 会回退到现场构建 → 重新踩超时坑。
+    // ⚠️ 必须带 g 标志：api 与 worker 各有一处 image 标签，
+    //    只校验首个会漏掉 worker 指向旧版本的情况。
+    const imgs = [...composeText.matchAll(/image:\s*kwink\/omnioffice:\$\{APP_VERSION:-([\d.]+)\}/g)];
+    must(
+      imgs.length > 0 && imgs.every((m) => m[1] === manifest.version),
+      `镜像 tag 与版本不一致：manifest=${manifest.version}，compose image tag=${imgs.length ? imgs.map((m) => m[1]).join(", ") : "未找到"}`,
+    );
   }
 }
 

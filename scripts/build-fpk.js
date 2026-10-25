@@ -206,16 +206,31 @@ function syncComposeVersion(packDir, newV) {
     console.log(`ℹ️未找到 compose，跳过版本同步: ${p}`);
     return;
   }
-  const text = fs.readFileSync(p, "utf8");
-  const re = /(APP_VERSION=\$\{APP_VERSION:-)([\d.]+)(\})/;
-  const m = text.match(re);
-  if (!m) {
-    console.error("❌ compose 中未找到 APP_VERSION 兜底值，无法同步版本号");
-    process.exit(1);
+  let text = fs.readFileSync(p, "utf8");
+  // v1.0.28：除了 APP_VERSION 兜底值，**image 的 tag 也要一起同步**。
+  // compose 里 api/worker 用 `image: kwink/omnioffice:${APP_VERSION:-X.Y.Z}`
+  // 指向 Docker Hub 上预构建的版本化镜像（根治 fnOS 升级时现场构建导致的超时）。
+  // 若只同步 APP_VERSION，manifest 变成 1.0.29 而 image 标签仍留在 1.0.28，
+  // NAS 就会拉到**上一个版本**的镜像（前端产物与包内版本不匹配）。
+  const patterns = [
+    { re: /(APP_VERSION=\$\{APP_VERSION:-)([\d.]+)(\})/g, label: "APP_VERSION 兜底值" },
+    { re: /(image:\s*kwink\/omnioffice:\$\{APP_VERSION:-)([\d.]+)(\})/g, label: "image tag" },
+  ];
+  for (const { re, label } of patterns) {
+    const matches = [...text.matchAll(re)];
+    if (matches.length === 0) {
+      console.error(`❌ compose 中未找到${label}，无法同步版本号`);
+      process.exit(1);
+    }
+    // ⚠️ 必须带 g 标志：api 与 worker **各有一处** image 标签，
+    //    只替首个会让 worker 仍指向旧版本镜像（worker 跑旧代码，
+    //    api 与 worker 版本不一致 → 队列消费行为错乱）。
+    const stale = [...new Set(matches.map((m) => m[2]))].filter((v) => v !== newV);
+    if (stale.length === 0) continue;
+    text = text.replace(re, `$1${newV}$3`);
+    console.log(`↻ compose ${label}同步: ${stale.join(", ")} → ${newV} (${matches.length} 处)`);
   }
-  if (m[2] === newV) return;
-  fs.writeFileSync(p, text.replace(re, `$1${newV}$3`), "utf8");
-  console.log(`↻ compose APP_VERSION 兜底值同步: ${m[2]} → ${newV}`);
+  fs.writeFileSync(p, text, "utf8");
 }
 
 /**
