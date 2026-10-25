@@ -52,7 +52,21 @@ function Invoke-Step {
     param([string]$Name, [scriptblock]$Action)
     Write-Host "==> $Name"
     $global:LASTEXITCODE = 0
-    & $Action | Out-Host
+    # 关键：原生命令（node/python/fnpack/npm）把**正常输出**写到 stderr 时，
+    # 在 $ErrorActionPreference='Stop' 下会被 PowerShell 包成 ErrorRecord 并
+    # 直接中止脚本 —— 哪怕退出码是 0。
+    # 真实踩坑（2026-10-25，v1.0.27 打包）：vite 在 chunk 变大时输出
+    # "(!) Some chunks are larger than 500 kB..." 警告到 stderr，
+    # build-web 步骤被误判为失败，而 npm 实际 exit=0、构建完全成功。
+    # 因此这里临时降级为 Continue，让**退出码成为唯一成败判据**
+    # （这正是本函数注释声称的设计意图），结束后恢复原设置。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Action | Out-Host
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     if ($LASTEXITCODE -ne 0) {
         Restore-Deps
         Write-Error "$Name FAILED (exit=$LASTEXITCODE)"

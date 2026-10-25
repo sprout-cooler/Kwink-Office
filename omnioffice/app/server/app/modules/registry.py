@@ -52,6 +52,20 @@ MODULES: tuple[ModuleMeta, ...] = (
             ModuleTab("gallery", "我的图库"),
         ),
     ),
+    ModuleMeta(
+        id="biz_dashboard",
+        display_name="经营大屏",
+        icon="biz-dashboard",
+        route="/biz-dashboard",
+        tabs=(
+            ModuleTab("overview", "总览看板"),
+            ModuleTab("workload", "工作量"),
+            ModuleTab("customer", "客户管理"),
+            ModuleTab("trip", "出差与路径"),
+            ModuleTab("finance", "财务管理"),
+            ModuleTab("share", "选择性分享"),
+        ),
+    ),
 )
 
 

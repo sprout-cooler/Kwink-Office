@@ -79,5 +79,14 @@
     "fpk": "omnioffice_1.0.26_all_20261019.fpk",
     "commit": null,
     "note": "新增图片处理模块 image_tool：格式转换/拼接/压缩/OCR 四大核心能力 + 图片编辑/我的图库/能力清单；Pillow 为唯一新增依赖；能力文件解耦可独立调用，统一 ImageToolError 异常契约；slim 与打包门禁改为递归发现 __pycache__，修新增模块字节码被打进 FPK 的缺陷"
+  },
+  {
+    "ts": "2026-10-25T06:03:01.121Z",
+    "appname": "omnioffice",
+    "version": "1.0.27",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.27_all_20261025.fpk",
+    "commit": null,
+    "note": "新增经营大屏模块：客户/出差/财务/工作量双口径/选择性分享/腾讯地图后端代理"
   }
 ]

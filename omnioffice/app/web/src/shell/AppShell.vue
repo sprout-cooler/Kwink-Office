@@ -5,6 +5,7 @@ import { computed, ref } from "vue";
 import { useAppStore } from "@/stores/app";
 import WeeklyReportPanel from "@/modules/weekly_report/WeeklyReportPanel.vue";
 import ImageToolPanel from "@/modules/image_tool/ImageToolPanel.vue";
+import BizDashboardPanel from "@/modules/biz_dashboard/BizDashboardPanel.vue";
 import SettingsDrawer from "./SettingsDrawer.vue";
 
 const store = useAppStore();
@@ -14,6 +15,7 @@ const settingsOpen = ref(false);
 const panels: Record<string, unknown> = {
   weekly_report: WeeklyReportPanel,
   image_tool: ImageToolPanel,
+  biz_dashboard: BizDashboardPanel,
 };
 const activePanel = computed(() => panels[store.activeModuleId] ?? null);
 

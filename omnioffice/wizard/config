@@ -50,5 +50,18 @@
         "tips": "识别完全在你自己的账号下调用，Key 仅存储在本 NAS，不上传任何第三方；识别费用由你的模型服务商按量计费。安装后可在「设置 → 应用配置」中修改，并可为不同模块分别指定模型。"
       }
     ]
+  },
+  {
+    "stepTitle": "地图服务配置（可选）",
+    "items": [
+      {
+        "type": "password",
+        "field": "tencent_map_key",
+        "label": "腾讯地图 Key",
+        "required": false,
+        "initValue": "",
+        "tips": "用于「经营大屏」的出差路径地图（选点与路径连线）。前往 https://lbs.qq.com/dev/console/key/manage 申请（需开通 WebService API 权限）。留空则该功能不可用，其余功能不受影响。Key 仅存储在本 NAS，前端拿不到明文 —— 地图请求由服务端代为转发。"
+      }
+    ]
   }
 ]

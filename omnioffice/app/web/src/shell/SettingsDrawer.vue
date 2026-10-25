@@ -3,8 +3,9 @@
 // 分类设计：通用设置 / AI 模型（全局默认）/ 各模块独立 AI ——
 // 后续新增模块只需在模块注册表登记，这里自动出现该模块的配置项，无需改前端。
 import { onMounted, ref, watch } from "vue";
-import { ElDrawer, ElTabs, ElTabPane, ElCard, ElDescriptions, ElDescriptionsItem, ElTag, ElMessage, ElMessageBox, ElForm, ElFormItem, ElInputNumber, ElCollapse, ElCollapseItem, ElBadge, ElCheckbox } from "element-plus";
+import { ElDrawer, ElTabs, ElTabPane, ElCard, ElDescriptions, ElDescriptionsItem, ElTag, ElMessage, ElMessageBox, ElForm, ElFormItem, ElInputNumber, ElCollapse, ElCollapseItem, ElBadge, ElCheckbox, ElInput } from "element-plus";
 import { settingsApi, downloadSettingsFile, type SettingsPayload, type AppSettingMeta } from "@/api/settings";
+import { bizApi } from "@/api/biz-dashboard";
 import { API_BASE } from "@/api/client";
 import AiConfigForm from "./AiConfigForm.vue";
 
@@ -21,17 +22,24 @@ const appVersion = ref("-");
 const appDraft = ref<Record<string, number>>({});
 const savingApp = ref(false);
 
+/** 腾讯地图 Key（经营大屏用）：只写不读，界面只显示「已配置 / 未配置」。 */
+const mapKeyConfigured = ref(false);
+const mapKeyDraft = ref("");
+const savingMapKey = ref(false);
+
 async function load() {
   loading.value = true;
   try {
-    const [d, health] = await Promise.all([
+    const [d, health, mapStatus] = await Promise.all([
       settingsApi.get(),
       fetch(`${API_BASE}/health`)
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
+      bizApi.mapKeyStatus().catch(() => null),
     ]);
     data.value = d;
     if (health?.version) appVersion.value = health.version;
+    mapKeyConfigured.value = mapStatus?.configured ?? false;
     const draft: Record<string, number> = {};
     for (const [k, v] of Object.entries(d.app)) draft[k] = (v as AppSettingMeta).value;
     appDraft.value = draft;
@@ -70,8 +78,40 @@ async function saveApp() {
   }
 }
 
-async function resetModuleAi(moduleId: string, name: string) {
+async function saveMapKey() {
+  savingMapKey.value = true;
   try {
+    await bizApi.saveMapKey(mapKeyDraft.value.trim());
+    mapKeyDraft.value = "";
+    mapKeyConfigured.value = true;
+    ElMessage.success("地图 Key 已保存（服务端托管，前端不回显）");
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : String(e));
+  } finally {
+    savingMapKey.value = false;
+  }
+}
+
+async function clearMapKey() {
+  try {
+    await ElMessageBox.confirm("确定清除腾讯地图 Key？清除后地图选点与路径显示将不可用。", "清除 Key", {
+      type: "warning",
+      confirmButtonText: "清除",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  try {
+    await bizApi.saveMapKey("");
+    mapKeyConfigured.value = false;
+    ElMessage.success("已清除");
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function resetModuleAi(moduleId: string, name: string) {  try {
     await ElMessageBox.confirm(
       `确定清除「${name}」的独立 AI 配置？清除后该模块将继承全局默认配置。`,
       "恢复继承全局",
@@ -221,6 +261,38 @@ async function onFilePicked(e: Event) {
             <div class="field-hint">
               默认不导出 API Key；导入时配置里为空的项表示「保持现状」，不会被清空。
             </div>
+          </ElCard>
+
+          <!-- 分类五：经营大屏地图 -->
+          <ElCard shadow="never" class="cfg-card">
+            <template #header>
+              <div class="card-head">
+                <b>经营大屏 · 地图服务</b>
+                <span class="card-sub">用于出差路径的地图选点与路径连线</span>
+              </div>
+            </template>
+            <ElForm label-width="110px" label-position="left">
+              <ElFormItem label="腾讯地图 Key">
+                <div class="cfg-actions">
+                  <ElTag v-if="mapKeyConfigured" type="success" effect="plain">已配置</ElTag>
+                  <ElTag v-else type="info" effect="plain">未配置</ElTag>
+                  <ElInput
+                    v-model="mapKeyDraft"
+                    type="password"
+                    show-password
+                    placeholder="粘贴腾讯位置服务 Key"
+                    style="width: 320px"
+                  />
+                  <ElButton type="primary" :loading="savingMapKey" @click="saveMapKey">保存</ElButton>
+                  <ElButton v-if="mapKeyConfigured" @click="clearMapKey">清除</ElButton>
+                </div>
+                <div class="field-hint">
+                  Key 存于本机数据库，<b>不会回显、不会传给浏览器</b> ——
+                  地图请求由服务端代为转发，前端拿不到明文 Key。
+                  申请地址：<a href="https://lbs.qq.com/dev/console/key/manage" target="_blank">腾讯位置服务控制台</a>
+                </div>
+              </ElFormItem>
+            </ElForm>
           </ElCard>
 
           <!-- 分类二：AI 模型（全局默认） -->
@@ -405,6 +477,29 @@ async function onFilePicked(e: Event) {
           </ElCard>
 
           <ElCard shadow="never" class="manual-card">
+            <template #header><b>6. 经营大屏（客户 / 出差 / 财务 / 工作量）</b></template>
+            <ol>
+              <li>左侧竖栏进入「<b>经营大屏</b>」，含六个功能页：总览看板、工作量、客户管理、出差与路径、财务管理、选择性分享。</li>
+              <li><b>客户管理</b>：录入客户主数据（名称、联系人、行业、等级、区域、标签）。客户是全模块的关联中枢 —— 出差、财务、工时都可挂到客户下。</li>
+              <li><b>出差与路径</b>：登记出差（客户、起止日期、交通方式、里程、花费），可添加多个「途经点」，途经点按顺序连成路径线。
+                <ul>
+                  <li>地图需要先配置腾讯地图 Key：<b>设置 → 应用配置 → 经营大屏 · 地图服务</b>（Key 存本机，前端拿不到明文）。</li>
+                  <li>填好地名后点「解析坐标」可自动填入经纬度；也可手工填写。</li>
+                </ul>
+              </li>
+              <li><b>财务管理</b>：登记收入与支出流水（类别、金额、日期、关联客户）。金额支持两位小数，统计精确无浮点误差。</li>
+              <li><b>工作量</b>：两个口径合并展示 ——
+                <ul>
+                  <li><b>周报工时</b>：来自周报识别结果，<b>只读</b>，系统不会改动你的周报数据；</li>
+                  <li><b>台账工时</b>：在「工作量」页手工登记，可关联客户。</li>
+                </ul>
+                周报任务本身没有客户字段，因此周报工时归入「未归属客户」—— 这是如实呈现，不是漏统计。</li>
+              <li><b>选择性分享</b>（财务数据涉敏）：勾选要分享的流水 → 生成链接 → 设有效期（最长 90 天）。<b>链接只显示一次</b>，请立即复制给对方；对方无需登录即可打开，但只能看到被勾选的记录。随时可在列表里撤销，撤销后链接立即失效。</li>
+            </ol>
+            <p class="manual-tip"><b>提示</b>：经营大屏的数据按应用账号隔离 —— 每个账号只能看到自己的数据，管理员也看不到别人的（除非显式分享）。</p>
+          </ElCard>
+
+          <ElCard shadow="never" class="manual-card">
             <template #header><b>常见问题</b></template>
             <p><b>Q：在哪里配置 AI？</b></p>
             <p>左侧竖栏顶部 ⚙ → 「应用配置」→ 「AI 模型（全局默认）」。这是识别功能的前提。</p>
@@ -418,6 +513,10 @@ async function onFilePicked(e: Event) {
             <p>Key 仅存储在本 NAS 的应用配置中，不上传任何第三方服务器，且界面上不回显明文。识别请求直接从你的 NAS 发送到模型服务商。</p>
             <p><b>Q：升级后数据会丢吗？</b></p>
             <p>不会。应用数据（含你保存的配置）存储在 NAS 的独立数据卷中，升级安装只更新应用代码，不影响数据。</p>
+            <p><b>Q：地图提示「调用配额已用尽」怎么办？</b></p>
+            <p>腾讯位置服务对每个 Key 的每个接口限制日调用量（默认 1 万次）。换一个新 Key、在控制台申请提额（审核约 3 个工作日），或等次日 0 点配额重置。系统已对地址解析做 24 小时缓存，重复地址不会重复消耗配额。</p>
+            <p><b>Q：分享出去的财务链接安全吗？</b></p>
+            <p>链接只能看到你显式勾选的记录，且有到期时间、可随时撤销。明文令牌只在创建时显示一次，服务端只存它的哈希值 —— 即使数据库泄露也无法反推出可用的链接。</p>
           </ElCard>
         </div>
       </ElTabPane>

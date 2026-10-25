@@ -27,6 +27,7 @@ from .core.identity import get_identity, get_provider
 from .db.deps import get_db
 from .db.session import SessionLocal, init_db
 from .modules import registry
+from .modules.biz_dashboard.router import router as biz_dashboard_router
 from .modules.image_tool.router import router as image_tool_router
 from .modules.weekly_report import recognize_queue
 from .modules.weekly_report.router import router as weekly_report_router
@@ -528,6 +529,7 @@ def _api_router() -> None:  # noqa: C901 —— 组装业务 API（双前缀挂�
 
     router.include_router(weekly_report_router, prefix="/weekly-report")
     router.include_router(image_tool_router, prefix="/image-tool")
+    router.include_router(biz_dashboard_router, prefix="/biz-dashboard")
     app.include_router(router, prefix="/api")
     app.include_router(router, prefix=f"{settings.gateway_prefix}/api")
 
@@ -662,6 +664,8 @@ def _inject_wizard() -> None:
         "llm_model": settings.llm_model,
     }
     if not any(wizard.values()):
+        # 即使没有 AI 配置，地图 Key 也要注入（两者是独立的向导项）
+        _inject_map_key()
         return
     db = SessionLocal()
     try:
@@ -671,6 +675,27 @@ def _inject_wizard() -> None:
     except Exception as e:  # 注入失败不应阻断启动
         db.rollback()
         print(f"[startup] wizard 注入跳过：{type(e).__name__}: {e}", flush=True)
+    finally:
+        db.close()
+    _inject_map_key()
+
+
+def _inject_map_key() -> None:
+    """把向导填的腾讯地图 Key 写入全局配置（幂等）。
+
+    与 AI Key 分开处理：地图功能不依赖 AI 配置，两者是独立能力。
+    """
+    if not settings.tencent_map_key:
+        return
+    db = SessionLocal()
+    try:
+        from .modules.biz_dashboard import geo
+
+        geo.inject_wizard_map_key(db, settings.tencent_map_key)
+        db.commit()
+    except Exception as e:  # 注入失败不应阻断启动
+        db.rollback()
+        print(f"[startup] 地图 Key 注入跳过：{type(e).__name__}: {e}", flush=True)
     finally:
         db.close()
 

@@ -45,6 +45,10 @@ class Settings:
     llm_model: str = field(default_factory=lambda: os.environ.get("LLM_MODEL", ""))
     # 识别并发：VLM 单张 RT 较长，适度并发摊总耗时（V10 性能指标 20 张≤60s）
     recognize_workers: int = int(os.environ.get("RECOGNIZE_WORKERS", "3"))
+    # 腾讯地图 Key（经营大屏的出差路径地图用）。
+    # 经 wizard 注入 → 存入 user_settings（按账号隔离）→ 前端永远拿不到明文，
+    # 地图请求由服务端反代注入 Key。
+    tencent_map_key: str = field(default_factory=lambda: os.environ.get("TENCENT_MAP_KEY", ""))
     # 本地开发跨域（仅 mock 模式下前端 vite 直连时需要）
     cors_dev: bool = field(default_factory=lambda: _bool(os.environ.get("CORS_DEV")))
 

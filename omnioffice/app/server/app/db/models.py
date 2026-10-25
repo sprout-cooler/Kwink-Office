@@ -10,9 +10,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .session import Base
@@ -216,6 +217,205 @@ class ImageAsset(Base):
             return not self.stored_path or not Path(self.stored_path).is_file()
         except OSError:
             return True
+
+
+# ================================================================ 经营大屏模块
+
+
+class BizCustomer(Base):
+    """客户主数据（经营大屏）。
+
+    设计要点：
+    - owner_uid 即数据归属键（应用账号 data_key），全表按账号隔离；
+    - 客户是全模块的**关联中枢**：出差、财务、工时都挂在客户下，
+      这样「这个客户花了多少人力、出差几次、花了多少钱」才能交叉聚合；
+    - name 不加唯一约束：同名客户可能是不同主体（如「XX科技」分公司与总公司），
+      强约束反而制造录入障碍；重复由应用层给出提示而非阻断；
+    - tags 用 JSON 数组存字符串标签（行业/等级/区域），避免为标签再开一张表。
+    """
+
+    __tablename__ = "biz_customers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    # 联系人 / 联系方式 / 备注
+    contact: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    phone: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    address: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # 行业 / 等级 / 区域（自由文本，不做字典表 —— 字典表会显著增加录入摩擦）
+    industry: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    level: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    region: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # active（合作中）| dormant（暂停）| archived（归档）
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class BizTrip(Base):
+    """出差记录（一次出差 = 一条，含起止与关联客户）。
+
+    - owner_uid 账号隔离；
+    - customer_id 指向客户：**建真外键**（客户被删时出差记录必须一并解绑，
+      否则会留下指向空气的关联）。删除客户时须先解绑所有引用并 commit，
+      理由同 v1.0.25 的 ForeignKeyViolation 教训；
+    - 起点/终点各存名称与经纬度（lng/lat），地名存文本便于人工录入，
+      经纬度可由地图选点或地理编码回填；
+    - mileage_km 里程（公里），cost_amount 该次出差的直接花费（元）。
+    """
+
+    __tablename__ = "biz_trips"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_customers.id"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    # 出发地 / 目的地（名称 + 经纬度）
+    origin_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    origin_lng: Mapped[float | None] = mapped_column(nullable=True)
+    origin_lat: Mapped[float | None] = mapped_column(nullable=True)
+    dest_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    dest_lng: Mapped[float | None] = mapped_column(nullable=True)
+    dest_lat: Mapped[float | None] = mapped_column(nullable=True)
+    # 计划起止日期（YYYY-MM-DD）
+    start_date: Mapped[str] = mapped_column(String(10), default="", index=True, nullable=False)
+    end_date: Mapped[str] = mapped_column(String(10), default="", index=True, nullable=False)
+    # 交通方式（飞机/高铁/自驾/其他）
+    transport: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    mileage_km: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    cost_amount: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    # planned（计划中）| ongoing（进行中）| done（已完成）| cancelled（已取消）
+    status: Mapped[str] = mapped_column(String(16), default="planned", index=True, nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class BizTripStop(Base):
+    """出差途经点（一条出差可有多站，支撑「出差路径」连线）。
+
+    - trip_id 指向出差：**建真外键**，删出差时随之删除（级联在业务层手动做，
+      见 service.delete_trip —— 先删途经点并 commit，再删出差主记录，
+      否则 ORM 同一 flush 内语句顺序由依赖图决定，会先删主表导致 FK 违规）；
+    - seq 是站点顺序（1 起），路径连线按 seq 升序；
+    - 不存 owner_uid：经由 trip_id 即可定位归属，冗余存储易与主表不一致。
+    """
+
+    __tablename__ = "biz_trip_stops"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("biz_trips.id"), index=True, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    lng: Mapped[float | None] = mapped_column(nullable=True)
+    lat: Mapped[float | None] = mapped_column(nullable=True)
+    arrive_date: Mapped[str] = mapped_column(String(10), default="", nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
+class BizExpense(Base):
+    """财务流水（经营大屏）。
+
+    ⚠️ 本表含**涉敏数据**（金额、客户名可能涉及商业机密），因此：
+    - 默认仅创建者本人可见，所有查询强制 owner_uid 过滤；
+    - 对外分享必须走 BizShare（显式勾选记录 + 有效期 + 可撤销），
+      **绝不提供「按 owner 查询全部」之类的开放接口**；
+    - amount 存正数，方向由 kind 决定（income 收入 / expense 支出），
+      避免负数与符号混淆导致统计反号；
+    - 金额用 Numeric(14,2) 存定点数，**不用 Float** —— 浮点累加会有
+      0.1+0.2 类误差，财务统计不可接受。SQLite 与 PostgreSQL 均支持 Numeric。
+    """
+
+    __tablename__ = "biz_expenses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_customers.id"), nullable=True, index=True
+    )
+    trip_id: Mapped[int | None] = mapped_column(ForeignKey("biz_trips.id"), nullable=True, index=True)
+    # income（收入）| expense（支出）
+    kind: Mapped[str] = mapped_column(String(16), default="expense", index=True, nullable=False)
+    # 类别（差旅/餐饮/办公/工资/采购/其他…）自由文本
+    category: Mapped[str] = mapped_column(String(64), default="", index=True, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
+    # 发生日期 YYYY-MM-DD
+    occurred_on: Mapped[str] = mapped_column(String(10), default="", index=True, nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class BizTimeEntry(Base):
+    """独立工时台账（经营大屏的工作量来源之一）。
+
+    为什么独立成表而**不改 task_items**：
+    - task_items 的语义是「某用户某周某个批次的截图识别产物」，主键归属周报批次，
+      往里混入手填工时会破坏周报自身的统计口径与导出模板锚点；
+    - 工时台账是**独立维度**：可记在客户/出差/项目下，与周报并行存在。
+
+    - hours 存小时数（定点数，允许 0.5 这类半天粒度）；
+    - task_date 是工作发生日 YYYY-MM-DD（不按周聚合，按日/按月聚合）；
+    - customer_id / trip_id 均可空：不是每段工时都归属客户或出差。
+    """
+
+    __tablename__ = "biz_time_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_customers.id"), nullable=True, index=True
+    )
+    trip_id: Mapped[int | None] = mapped_column(ForeignKey("biz_trips.id"), nullable=True, index=True)
+    # 事项描述（这段工时做了什么）
+    title: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    hours: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=Decimal("0"), nullable=False)
+    task_date: Mapped[str] = mapped_column(String(10), default="", index=True, nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class BizShare(Base):
+    """经营大屏的选择性分享令牌（财务涉敏数据的受控外发）。
+
+    威胁模型与设计：
+    - 分享是**显式勾选 + 有时效 + 可撤销**三件套，缺一不可：
+      * scope 存被勾选的记录 id 列表（JSON 数组），不是「全部财务」；
+      * expires_at 到期即失效，读取时逐条比对当前时间；
+      * revoked 置 1 后立即失效（不等到期）；
+    - token 用 secrets.token_urlsafe 生成，**只存哈希不存明文**：
+      即使数据库泄露也无法反推出可用的分享链接；
+    - 明文 token 只在创建时返回一次给创建者，由其自行转发给接收人；
+    - scope_ids 为空 = 不分享任何记录（创建即无效，等同不发），
+      防止误操作把空范围当成「全部可见」；
+    - 分享出去的视图**不含 owner_uid**，且不暴露其他未勾选的记录。
+    """
+
+    __tablename__ = "biz_shares"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    # token 的 sha256 哈希（十六进制），明文不落库
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # 被勾选的记录 id 列表（JSON 数组 of int）
+    scope_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # 分享内容的类别：expense（财务）| workload（工作量）| trip（出差）
+    scope_kind: Mapped[str] = mapped_column(String(16), default="expense", nullable=False)
+    # 有效期（ISO8601 datetime），到点即失效
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # 1 = 已撤销，立即失效
+    revoked: Mapped[int] = mapped_column(Integer, default=0, index=True, nullable=False)
+    # 访问次数（用于察觉异常分享传播）
+    view_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 # ================================================================ 账号与数据隔离
