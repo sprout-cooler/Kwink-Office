@@ -208,13 +208,13 @@ function syncComposeVersion(packDir, newV) {
   }
   let text = fs.readFileSync(p, "utf8");
   // v1.0.28：除了 APP_VERSION 兜底值，**image 的 tag 也要一起同步**。
-  // compose 里 api/worker 用 `image: kwink/omnioffice:${APP_VERSION:-X.Y.Z}`
+  // compose 里 api/worker 用 `image: kwink/kwinkoffice:${APP_VERSION:-X.Y.Z}`
   // 指向 Docker Hub 上预构建的版本化镜像（根治 fnOS 升级时现场构建导致的超时）。
   // 若只同步 APP_VERSION，manifest 变成 1.0.29 而 image 标签仍留在 1.0.28，
   // NAS 就会拉到**上一个版本**的镜像（前端产物与包内版本不匹配）。
   const patterns = [
     { re: /(APP_VERSION=\$\{APP_VERSION:-)([\d.]+)(\})/g, label: "APP_VERSION 兜底值" },
-    { re: /(image:\s*kwink\/omnioffice:\$\{APP_VERSION:-)([\d.]+)(\})/g, label: "image tag" },
+    { re: /(image:\s*kwink\/kwinkoffice:\$\{APP_VERSION:-)([\d.]+)(\})/g, label: "image tag" },
   ];
   for (const { re, label } of patterns) {
     const matches = [...text.matchAll(re)];

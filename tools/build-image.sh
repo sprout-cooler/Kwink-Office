@@ -47,7 +47,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-IMAGE="${OO_IMAGE:-kwink/omnioffice}"
+IMAGE="${OO_IMAGE:-kwink/kwinkoffice}"
 NAS_HOST="${NAS_HOST:-192.168.31.204}"
 NAS_SSH_KEY="${NAS_SSH_KEY:-$HOME/.ssh/id_ed25519_fn_nas}"
 NAS_WORKDIR="${NAS_WORKDIR:-/vol2/omnioffice-build}"
@@ -85,11 +85,11 @@ fi
 #   1. package-fpk.ps1  -> bumps manifest to 1.0.28 AND rewrites the compose
 #                          (APP_VERSION fallback + image tag) to 1.0.28
 #   2. build-image.sh   -> reads the bumped manifest, builds + pushes 1.0.28
-#   3. install the fpk  -> the NAS pulls kwink/omnioffice:1.0.28
+#   3. install the fpk  -> the NAS pulls kwink/kwinkoffice:1.0.28
 # So the tag always comes from the manifest AFTER packaging. When --tag is
 # given explicitly it must match what packaging produced.
 COMPOSE="$ROOT/omnioffice/app/docker/docker-compose.yaml"
-COMPOSE_TAG="$(sed -n 's/.*image: kwink\/omnioffice:\${APP_VERSION:-\([0-9.]*\)}.*/\1/p' "$COMPOSE" | head -n1)"
+COMPOSE_TAG="$(sed -n 's/.*image: kwink\/kwinkoffice:\${APP_VERSION:-\([0-9.]*\)}.*/\1/p' "$COMPOSE" | head -n1)"
 if [ "$COMPOSE_TAG" != "$TAG" ]; then
   echo "ERROR: compose image tag ($COMPOSE_TAG) != tag ($TAG)." >&2
   echo "       Run package-fpk.ps1 FIRST (it bumps manifest and syncs the" >&2

@@ -34,7 +34,7 @@ if (-not $existing) {
 
 # 4) push all remotes with tags.
 #    gitee + gitcode are the long-standing mirrors; github was added in
-#    v1.0.28 (git@github.com:sprout-cooler/omnioffice.git, SSH key
+#    v1.0.28 (git@github.com:sprout-cooler/kwinkoffice.git, SSH key
 #    id_ed25519_fn_repos per ~/.ssh/config).
 $remotes = @("gitee", "gitcode", "github")
 foreach ($r in $remotes) {

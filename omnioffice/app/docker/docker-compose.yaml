@@ -18,7 +18,7 @@
 #   实测（Docker Compose v5.0.2，NAS 上对照实验）：
 #     image: + build: 并存且本地无该 tag 时 → compose **优先 pull 远端镜像**，
 #     实测日志 `Image kwink/kwinkguide:0.5.43 Pulling → Pulled`，未触发构建。
-#   实测 NAS 拉取 kwink/omnioffice:1.0.28 耗时 **2 分 44 秒**（vs 冷构建 9 分 15 秒）。
+#   实测 NAS 拉取 kwink/kwinkoffice:1.0.28 耗时 **2 分 44 秒**（vs 冷构建 9 分 15 秒）。
 #   build: 段保留作为**兜底**：镜像拉不动时 compose 会回退到本地构建，功能不中断。
 #
 #   ⚠️ image 的 tag 必须与 manifest.version 同版本（check-fpk.mjs 有门禁校验
@@ -29,7 +29,7 @@
 #      因此**这里必须与当前 manifest.version 保持一致**，不要手改。
 services:
   api:
-    image: kwink/omnioffice:${APP_VERSION:-1.0.28}
+    image: kwink/kwinkoffice:${APP_VERSION:-1.0.28}
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
@@ -63,7 +63,7 @@ services:
         condition: service_started
 
   worker:
-    image: kwink/omnioffice:${APP_VERSION:-1.0.28}
+    image: kwink/kwinkoffice:${APP_VERSION:-1.0.28}
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
