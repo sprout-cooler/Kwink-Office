@@ -72,7 +72,7 @@ def get_map_key(db: Session, owner: str) -> str:
 
     读取顺序与 AI 配置同范式：**账号私有值优先，其次回落全局值**。
     全局值来自安装向导注入（首次装机即配好），
-    账号私有值来自用户自己在「设置 → 经营大屏」里填的（可覆盖全局）。
+    账号私有值来自用户自己在「设置 → 数据大屏」里填的（可覆盖全局）。
     """
     return (_read(db, owner, constants.MAP_KEY_SETTING) or "").strip()
 

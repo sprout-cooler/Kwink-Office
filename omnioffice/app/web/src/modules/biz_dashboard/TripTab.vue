@@ -155,7 +155,7 @@ async function geocodeInto(which: "origin" | "dest", addr: string) {
   }
 }
 
-/** 地图展示：当前所有出差的所有点 + 第一条出差的路径。 */
+/** 地图展示：当前所有出差的所有点 + 每条出差连成一条路径线。 */
 const mapMarkers = computed(() =>
   items.value.flatMap((t) => {
     const pts: { lng: number; lat: number; title: string }[] = [];
@@ -174,13 +174,26 @@ const mapMarkers = computed(() =>
   }),
 );
 
-const mapPath = computed(() => {
-  const t = items.value.find((x) => (x.stops ?? []).length >= 2);
-  if (!t) return [];
-  return (t.stops ?? [])
-    .filter((s) => s.lng != null && s.lat != null)
-    .map((s) => ({ lng: s.lng as number, lat: s.lat as number, title: s.name }));
-});
+/** 每条出差画一条路径线：出发地 → 途经点（按 seq）→ 目的地。 */
+const mapPathLines = computed(() =>
+  items.value
+    .map((t) => {
+      const line: { lng: number; lat: number; title: string }[] = [];
+      if (t.originLng != null && t.originLat != null) {
+        line.push({ lng: t.originLng, lat: t.originLat, title: `${t.title || "出差"} · 出发地` });
+      }
+      (t.stops ?? []).forEach((s) => {
+        if (s.lng != null && s.lat != null) {
+          line.push({ lng: s.lng, lat: s.lat, title: s.name });
+        }
+      });
+      if (t.destLng != null && t.destLat != null) {
+        line.push({ lng: t.destLng, lat: t.destLat, title: `${t.title || "出差"} · 目的地` });
+      }
+      return line;
+    })
+    .filter((line) => line.length >= 2),
+);
 
 const statusLabel = (code: string) =>
   caps.value?.tripStatus.find((s) => s.value === code)?.label ?? code;
@@ -204,10 +217,10 @@ const transportLabel = (code: string) =>
         type="info"
         :closable="false"
         show-icon
-        title="未配置腾讯地图 Key，地图暂不可用。请到「设置 → 经营大屏」填写 Key（服务端代为调用，前端不会泄露）。"
+        title="未配置腾讯地图 Key，地图暂不可用。请到「设置 → 数据大屏」填写 Key（服务端代为调用，前端不会泄露）。"
         class="mb"
       />
-      <TripMap v-else :markers="mapMarkers" :path="mapPath" height="380px" />
+      <TripMap v-else :markers="mapMarkers" :path-lines="mapPathLines" height="380px" />
     </el-card>
 
     <el-table :data="items" size="small" v-loading="loading" empty-text="暂无出差记录">

@@ -12,15 +12,18 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { mapServiceHost } from "@/api/biz-dashboard";
 
+/** 地图上的一个坐标点。 */
+type MapPoint = { lng: number; lat: number; title?: string };
+
 const props = withDefaults(
   defineProps<{
     /** 标记点列表 */
-    markers?: { lng: number; lat: number; title?: string }[];
-    /** 连线路径（按顺序） */
-    path?: { lng: number; lat: number; title?: string }[];
+    markers?: MapPoint[];
+    /** 路径线列表：每条线是一组按顺序排列的点（如「出发地 → 途经点 → 目的地」） */
+    pathLines?: MapPoint[][];
     height?: string;
   }>(),
-  { markers: () => [], path: () => [], height: "360px" },
+  { markers: () => [], pathLines: () => [], height: "360px" },
 );
 
 const emit = defineEmits<{ (e: "error", msg: string): void }>();
@@ -78,7 +81,7 @@ function drawLayers() {
   }
 
   if (pathLayer) {
-    pathLayer.setPaths([]);
+    pathLayer.setGeometries([]);
   } else {
     pathLayer = new TMap.MultiPolyline({
       map: mapInstance,
@@ -92,20 +95,23 @@ function drawLayers() {
       },
     });
   }
-  if (props.path.length >= 2) {
-    pathLayer.setPaths([
-      props.path.map((p) => new TMap.LatLng(p.lat, p.lng)),
-    ]);
-  } else {
-    pathLayer.setPaths([]);
-  }
+  // MultiPolyline 没有 setPaths 方法，只有 setGeometries(geometries)；
+  // 每个 geometry 形如 { id, styleId, paths: LatLng[] }（paths 是一维点序列）。
+  const lines = props.pathLines
+    .filter((line) => line.length >= 2)
+    .map((line, i) => ({
+      id: `path-${i}`,
+      styleId: "default",
+      paths: line.map((p) => new TMap.LatLng(p.lat, p.lng)),
+    }));
+  pathLayer.setGeometries(lines);
 }
 
 /** 以所有点为中心定位视野。 */
 function fitView() {
   if (!mapInstance || !window.TMap) return;
   const TMap = window.TMap;
-  const pts = [...props.markers, ...props.path].filter(
+  const pts = [...props.markers, ...props.pathLines.flat()].filter(
     (p) => Number.isFinite(p.lng) && Number.isFinite(p.lat),
   );
   if (!pts.length) return;
@@ -135,7 +141,7 @@ onMounted(async () => {
 });
 
 watch(
-  () => [props.markers, props.path],
+  () => [props.markers, props.pathLines],
   () => {
     drawLayers();
     fitView();

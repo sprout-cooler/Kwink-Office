@@ -54,7 +54,7 @@ MODULES: tuple[ModuleMeta, ...] = (
     ),
     ModuleMeta(
         id="biz_dashboard",
-        display_name="经营大屏",
+        display_name="数据大屏",
         icon="biz-dashboard",
         route="/biz-dashboard",
         tabs=(

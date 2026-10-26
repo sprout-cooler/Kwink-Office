@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 经营大屏主面板：按模块注册表的 Tab 切换。 */
+/** 数据大屏主面板：按模块注册表的 Tab 切换。 */
 import { computed, defineAsyncComponent, ref } from "vue";
 
 const props = defineProps<{ tab: string }>();

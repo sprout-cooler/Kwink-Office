@@ -1,4 +1,4 @@
-"""经营大屏统一异常。
+"""数据大屏统一异常。
 
 设计原则与 image_tool/errors.py 完全一致：
 - 业务代码只抛 BizDashboardError，绝不直接抛 HTTPException；
@@ -14,7 +14,7 @@ from typing import Any
 
 
 class BizDashboardError(RuntimeError):
-    """经营大屏可预期的业务错误。"""
+    """数据大屏可预期的业务错误。"""
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ def map_not_configured() -> BizDashboardError:
     return BizDashboardError(
         "MAP_NOT_CONFIGURED",
         "未配置腾讯地图 Key，无法使用地图选点与路径显示。"
-        "请在「设置 → 经营大屏」中填写腾讯地图 Key（服务端代为调用，前端不会泄露）",
+        "请在「设置 → 数据大屏」中填写腾讯地图 Key（服务端代为调用，前端不会泄露）",
         400,
     )
 
@@ -107,7 +107,7 @@ def map_quota_exceeded(reason: str) -> BizDashboardError:
     return BizDashboardError(
         "MAP_QUOTA_EXCEEDED",
         f"腾讯地图调用配额已用尽（{reason}）。"
-        "处置方式：① 在「设置 → 经营大屏」换一个 Key；"
+        "处置方式：① 在「设置 → 数据大屏」换一个 Key；"
         "② 到腾讯位置服务控制台「配额申请」提升日调用量（审核约 3 个工作日）；"
         "③ 等待次日 0 点配额重置。"
         "在此期间地图选点与路径显示不可用，其他功能不受影响。",

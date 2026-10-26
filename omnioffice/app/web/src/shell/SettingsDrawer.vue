@@ -22,7 +22,7 @@ const appVersion = ref("-");
 const appDraft = ref<Record<string, number>>({});
 const savingApp = ref(false);
 
-/** 腾讯地图 Key（经营大屏用）：只写不读，界面只显示「已配置 / 未配置」。 */
+/** 腾讯地图 Key（数据大屏用）：只写不读，界面只显示「已配置 / 未配置」。 */
 const mapKeyConfigured = ref(false);
 const mapKeyDraft = ref("");
 const savingMapKey = ref(false);
@@ -263,11 +263,11 @@ async function onFilePicked(e: Event) {
             </div>
           </ElCard>
 
-          <!-- 分类五：经营大屏地图 -->
+          <!-- 分类五：数据大屏地图 -->
           <ElCard shadow="never" class="cfg-card">
             <template #header>
               <div class="card-head">
-                <b>经营大屏 · 地图服务</b>
+                <b>数据大屏 · 地图服务</b>
                 <span class="card-sub">用于出差路径的地图选点与路径连线</span>
               </div>
             </template>
@@ -477,13 +477,13 @@ async function onFilePicked(e: Event) {
           </ElCard>
 
           <ElCard shadow="never" class="manual-card">
-            <template #header><b>6. 经营大屏（客户 / 出差 / 财务 / 工作量）</b></template>
+            <template #header><b>6. 数据大屏（客户 / 出差 / 财务 / 工作量）</b></template>
             <ol>
-              <li>左侧竖栏进入「<b>经营大屏</b>」，含六个功能页：总览看板、工作量、客户管理、出差与路径、财务管理、选择性分享。</li>
+              <li>左侧竖栏进入「<b>数据大屏</b>」，含六个功能页：总览看板、工作量、客户管理、出差与路径、财务管理、选择性分享。</li>
               <li><b>客户管理</b>：录入客户主数据（名称、联系人、行业、等级、区域、标签）。客户是全模块的关联中枢 —— 出差、财务、工时都可挂到客户下。</li>
               <li><b>出差与路径</b>：登记出差（客户、起止日期、交通方式、里程、花费），可添加多个「途经点」，途经点按顺序连成路径线。
                 <ul>
-                  <li>地图需要先配置腾讯地图 Key：<b>设置 → 应用配置 → 经营大屏 · 地图服务</b>（Key 存本机，前端拿不到明文）。</li>
+                  <li>地图需要先配置腾讯地图 Key：<b>设置 → 应用配置 → 数据大屏 · 地图服务</b>（Key 存本机，前端拿不到明文）。</li>
                   <li>填好地名后点「解析坐标」可自动填入经纬度；也可手工填写。</li>
                 </ul>
               </li>
@@ -496,7 +496,7 @@ async function onFilePicked(e: Event) {
                 周报任务本身没有客户字段，因此周报工时归入「未归属客户」—— 这是如实呈现，不是漏统计。</li>
               <li><b>选择性分享</b>（财务数据涉敏）：勾选要分享的流水 → 生成链接 → 设有效期（最长 90 天）。<b>链接只显示一次</b>，请立即复制给对方；对方无需登录即可打开，但只能看到被勾选的记录。随时可在列表里撤销，撤销后链接立即失效。</li>
             </ol>
-            <p class="manual-tip"><b>提示</b>：经营大屏的数据按应用账号隔离 —— 每个账号只能看到自己的数据，管理员也看不到别人的（除非显式分享）。</p>
+            <p class="manual-tip"><b>提示</b>：数据大屏的数据按应用账号隔离 —— 每个账号只能看到自己的数据，管理员也看不到别人的（除非显式分享）。</p>
           </ElCard>
 
           <ElCard shadow="never" class="manual-card">
