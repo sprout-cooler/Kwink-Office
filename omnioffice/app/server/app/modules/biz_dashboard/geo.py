@@ -67,6 +67,40 @@ def _cache_put(key: str, data: dict[str, Any]) -> None:
     _GEOCODE_CACHE[key] = (time.monotonic(), data)
 
 
+# ---- 配额熔断 ----
+#
+# 实测（2026-10-26）：腾讯位置服务对**整个 Key** 限制日调用量（默认 1 万次），
+# 且这个额度是**所有 WebService 接口合计**的 —— 实测 geocoder 报 121 时，
+# place/v1 也报 121（不是只有地址解析接口受限）。
+#
+# 配额耗尽后若继续打上游：
+#   1) 每次都要等一个完整往返，纯属浪费；
+#   2) 腾讯持续返回 121，用户看到的永远是同一个死错误；
+#   3) 配额重置的判定时机不明确，反复打可能让刚重置的额度又被消耗。
+#
+# 所以检测到配额类错误后，短期内直接短路返回，不再打上游。
+# 熔断窗口取 15 分钟：既让用户尽快拿到提示，也能在配额恢复后较快自愈。
+_QUOTA_CIRCUIT: dict[str, float] = {}          # key -> 熔断截止时间戳
+_QUOTA_CIRCUIT_REASON: dict[str, str] = {}     # key -> 最近一次配额错误原因
+_QUOTA_CIRCUIT_TTL = 15 * 60.0
+
+
+def _quota_circuit_open(key: str) -> bool:
+    until = _QUOTA_CIRCUIT.get(key)
+    if until is None:
+        return False
+    if time.monotonic() >= until:
+        _QUOTA_CIRCUIT.pop(key, None)
+        _QUOTA_CIRCUIT_REASON.pop(key, None)
+        return False
+    return True
+
+
+def _quota_circuit_trip(key: str, reason: str) -> None:
+    _QUOTA_CIRCUIT[key] = time.monotonic() + _QUOTA_CIRCUIT_TTL
+    _QUOTA_CIRCUIT_REASON[key] = reason
+
+
 def get_map_key(db: Session, owner: str) -> str:
     """取地图 Key（明文，仅服务端使用，绝不返回前端）。
 
@@ -130,6 +164,10 @@ def proxy_ws(db: Session, owner: str, query: str) -> dict[str, Any]:
     if not key:
         raise map_not_configured()
 
+    # 配额熔断：短期内已知配额耗尽，直接短路，不再打上游（避免无谓 RTT 与消耗）
+    if _quota_circuit_open(key):
+        raise map_quota_exceeded(_QUOTA_CIRCUIT_REASON.get(key, "此key每日调用量已达到上限"))
+
     parsed = urllib.parse.urlparse(query)
     path = parsed.path or "/"
     if not _allowed(path):
@@ -183,6 +221,8 @@ def proxy_ws(db: Session, owner: str, query: str) -> dict[str, Any]:
             msg = str(data.get("message") or "未知错误")
             # 配额耗尽是用户可自行处置的问题，单独给可行动提示
             if "调用量已达到上限" in msg or "配额" in msg or "频率" in msg:
+                # 触发熔断：后续请求短路返回，不再消耗上游额度
+                _quota_circuit_trip(key, msg)
                 raise map_quota_exceeded(msg)
             raise map_failed(msg)
     return data if isinstance(data, dict) else {"result": data}

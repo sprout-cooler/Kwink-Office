@@ -46,8 +46,21 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
   if (!res.ok) {
-    const body = data as { error?: string; message?: string };
-    throw new ApiError(body?.error ?? "HTTP_ERROR", body?.message ?? `请求失败（HTTP ${res.status}）`, res.status);
+    // 错误体有两种形态，必须都兼容：
+    //   ① FastAPI 的 HTTPException(detail={...}) → 响应体是 {"detail": {"error","message"}}
+    //   ② 直接返回 {"error","message"} 的业务错误体
+    // 只读顶层字段会让 ① 的可行动提示（如「腾讯地图配额已用尽，换 Key / 提额 / 等次日重置」）
+    // 全部丢失，用户只能看到无信息量的「请求失败（HTTP 429）」。
+    const raw = data as { error?: string; message?: string; detail?: unknown };
+    const detail =
+      raw?.detail && typeof raw.detail === "object"
+        ? (raw.detail as { error?: string; message?: string })
+        : undefined;
+    throw new ApiError(
+      detail?.error ?? raw?.error ?? "HTTP_ERROR",
+      detail?.message ?? raw?.message ?? `请求失败（HTTP ${res.status}）`,
+      res.status,
+    );
   }
   return data as T;
 }

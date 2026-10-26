@@ -75,6 +75,9 @@ function openCreate() {
     note: "",
   };
   stops.value = [];
+  quotaHint.value = "";
+  manualCoords.value = false;
+  manual.value = { originLng: "", originLat: "", destLng: "", destLat: "" };
   dialog.value = true;
 }
 
@@ -103,6 +106,15 @@ function openEdit(row: BizTrip) {
     lat: s.lat,
     arriveDate: s.arriveDate,
   }));
+  // 手动坐标输入框回填已有坐标（编辑时能直接看到/微调）
+  quotaHint.value = "";
+  manualCoords.value = false;
+  manual.value = {
+    originLng: row.originLng != null ? String(row.originLng) : "",
+    originLat: row.originLat != null ? String(row.originLat) : "",
+    destLng: row.destLng != null ? String(row.destLng) : "",
+    destLat: row.destLat != null ? String(row.destLat) : "",
+  };
   dialog.value = true;
 }
 
@@ -151,7 +163,41 @@ async function geocodeInto(which: "origin" | "dest", addr: string) {
       }
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    // 配额耗尽（HTTP 429）时，地址解析不可用但**手动填坐标仍可行**，
+    // 因此这里不清空已有坐标，只提示用户可改用手动填写。
+    const msg = e instanceof Error ? e.message : String(e);
+    error.value = msg;
+    if (/配额|429/.test(msg)) {
+      quotaHint.value = "腾讯地图配额已用尽，地址解析暂不可用。可展开「手动填写坐标」直接输入经纬度。";
+    }
+  }
+}
+
+/** 手动坐标输入区是否展开（默认收起，解析失败或用户主动展开时打开）。 */
+const manualCoords = ref(false);
+const quotaHint = ref("");
+
+/** 手动填坐标的经纬度输入（绑定到 form 上的 null 值）。 */
+const manual = ref({
+  originLng: "",
+  originLat: "",
+  destLng: "",
+  destLat: "",
+});
+
+/** 把手动输入的经纬度写回 form（空值不覆盖）。 */
+function applyManualCoords() {
+  const num = (s: string): number | null => {
+    const v = Number(s);
+    return s.trim() === "" || Number.isNaN(v) ? null : v;
+  };
+  if (manual.value.originLng.trim() || manual.value.originLat.trim()) {
+    form.value.originLng = num(manual.value.originLng);
+    form.value.originLat = num(manual.value.originLat);
+  }
+  if (manual.value.destLng.trim() || manual.value.destLat.trim()) {
+    form.value.destLng = num(manual.value.destLng);
+    form.value.destLat = num(manual.value.destLat);
   }
 }
 
@@ -284,6 +330,24 @@ const transportLabel = (code: string) =>
             <el-button @click="geocodeInto('dest', form.destName)">解析坐标</el-button>
           </div>
         </el-form-item>
+        <el-form-item label="坐标">
+          <el-button link type="primary" @click="manualCoords = !manualCoords">
+            {{ manualCoords ? "收起手动坐标" : "手动填写坐标" }}
+          </el-button>
+          <span v-if="quotaHint" class="hint">{{ quotaHint }}</span>
+        </el-form-item>
+        <el-form-item v-if="manualCoords" label="经纬度">
+          <div class="row">
+            <el-input v-model="manual.originLng" placeholder="出发地经度" style="width:150px" />
+            <el-input v-model="manual.originLat" placeholder="出发地纬度" style="width:150px" />
+          </div>
+          <div class="row" style="margin-top:8px">
+            <el-input v-model="manual.destLng" placeholder="目的地经度" style="width:150px" />
+            <el-input v-model="manual.destLat" placeholder="目的地纬度" style="width:150px" />
+            <el-button @click="applyManualCoords">应用坐标</el-button>
+          </div>
+          <div class="hint">格式：小数度（如 116.307503, 39.984104），北京为东经北纬。留空表示该端无坐标。</div>
+        </el-form-item>
         <el-form-item label="起止日期">
           <div class="row">
             <el-date-picker
@@ -361,6 +425,11 @@ const transportLabel = (code: string) =>
   display: flex;
   gap: 8px;
   width: 100%;
+}
+.hint {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.6;
 }
 .stops {
   width: 100%;

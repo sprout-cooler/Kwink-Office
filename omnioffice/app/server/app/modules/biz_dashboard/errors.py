@@ -100,13 +100,16 @@ def map_failed(reason: str) -> BizDashboardError:
 def map_quota_exceeded(reason: str) -> BizDashboardError:
     """腾讯地图配额耗尽 —— 与普通调用失败分开提示，因为处置方式完全不同。
 
-    腾讯对每个 Key 的每个接口限制日调用量（默认 1 万次）。
+    腾讯对每个 Key 限制日调用量（默认 1 万次），且这个额度是**所有 WebService
+    接口合计**的（实测 2026-10-26：geocoder 报配额耗尽时，place/v1 同样报耗尽）。
     配额耗尽时：换 Key / 在控制台申请提额 / 等待次日重置。
     这是**用户侧可自行解决**的问题，不该只丢一句「调用失败」。
     """
     return BizDashboardError(
         "MAP_QUOTA_EXCEEDED",
         f"腾讯地图调用配额已用尽（{reason}）。"
+        "注意：腾讯位置服务的日调用量配额是**该 Key 下所有接口合计**的，"
+        "地址解析、POI 搜索、路线规划会互相占用，因此配额用尽后地图相关功能会一起不可用。"
         "处置方式：① 在「设置 → 数据大屏」换一个 Key；"
         "② 到腾讯位置服务控制台「配额申请」提升日调用量（审核约 3 个工作日）；"
         "③ 等待次日 0 点配额重置。"
