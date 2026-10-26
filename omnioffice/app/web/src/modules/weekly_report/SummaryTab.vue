@@ -9,6 +9,7 @@ import {
   ASSIGNABLE_CATEGORIES,
   type SummaryData,
 } from "@/api/weekly-report";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOStatTile, OOToolbar } from "@/components/ui";
 
 const loading = ref(false);
 const data = ref<SummaryData | null>(null);
@@ -32,6 +33,31 @@ const offlineItems = computed(() => {
   if (!d) return [];
   return d.items.filter((i) => i.category === "training" || i.category === "offline_service" || i.category === "presale");
 });
+
+/** 线上售后：模板口径为「企微会话量：N次」，取企微一周小结，不取任务条数 */
+const onlineItem = computed(
+  () => data.value?.items.find((i) => i.category === "online_service") ?? null,
+);
+
+/** 其余三项按分类取指标块（培训 / 线下售后 / 售前） */
+const otherItems = computed(
+  () => data.value?.items.filter((i) => i.category !== "online_service") ?? [],
+);
+
+/** 指标块色调：按分类映射（仅视觉） */
+const TONE_MAP: Record<string, "brand" | "teal" | "purple" | "pink" | "amber" | "green" | "red"> = {
+  training: "purple",
+  offline_service: "green",
+  presale: "amber",
+  online_service: "teal",
+};
+
+const ICON_MAP: Record<string, string> = {
+  training: "🎓",
+  offline_service: "🛠️",
+  presale: "💡",
+  online_service: "💬",
+};
 
 async function categorize(taskId: number, cat: string) {
   try {
@@ -83,66 +109,102 @@ async function saveSessions() {
 
 <template>
   <div v-loading="loading" class="summary-tab">
-    <el-empty
+    <OOPageHeader
+      title="工作汇总"
+      description="按 Excel 模板口径统计培训、线下售后、售前与线上售后四项数量，未分类任务可在此手工归类"
+      badge="📊"
+    >
+      <el-button :loading="loading" @click="refresh">
+        <span class="oo-btn-icon"><OOIcon name="refresh" :size="16" /></span>
+        刷新
+      </el-button>
+    </OOPageHeader>
+
+    <OOEmptyState
       v-if="!loading && data && data.total === 0 && data.wechatSessions == null"
-      description="还没有任务数据 —— 请先上传截图并识别"
+      variant="chart"
+      title="还没有任务数据"
+      description="请先上传截图并识别，识别完成后这里会给出四项统计口径"
     />
 
     <template v-else-if="data">
       <!-- 四项统计 -->
       <div class="stat-grid">
         <!-- 线上售后：模板口径为「企微会话量：N次」，取企微一周小结，不取任务条数 -->
-        <el-card
-          v-for="it in data.items.filter((x) => x.category === 'online_service')"
+        <OOStatTile
+          v-if="onlineItem"
+          :label="`${onlineItem.label}（企微会话量/次）`"
+          :icon="ICON_MAP.online_service"
+          :tone="TONE_MAP.online_service"
+          :value="data.wechatSessions ?? '—'"
+          :hint="data.wechatMinutes ? `本周 ${data.wechatMinutes} 分钟` : '未提供企微小结'"
+        />
+
+        <OOStatTile
+          v-for="it in otherItems"
           :key="it.category"
-          shadow="never"
-          class="stat-card stat-card--online"
-        >
-          <div v-if="!editingSessions" class="stat-num">
-            {{ data.wechatSessions ?? "—" }}
-            <el-button link type="primary" class="edit-btn" title="修正会话量" @click="startEditSessions">
-              修正
-            </el-button>
-          </div>
-          <div v-else class="sessions-edit">
-            <el-input-number
-              v-model="sessionsInput"
-              :min="0"
-              :max="1000000"
-              :controls="false"
-              size="small"
-              class="sessions-input"
-              @keyup.enter="saveSessions"
-            />
-            <el-button type="primary" size="small" :loading="savingSessions" @click="saveSessions">保存</el-button>
-            <el-button size="small" @click="editingSessions = false">取消</el-button>
-          </div>
-          <div class="stat-label">{{ it.label }}（企微会话量/次）</div>
-          <div class="stat-sub">
+          :label="it.label"
+          :icon="ICON_MAP[it.category] ?? '📌'"
+          :tone="TONE_MAP[it.category] ?? 'brand'"
+          :value="it.count"
+          hint="按标题关键词判定"
+        />
+      </div>
+
+      <!-- 企微会话量：来源说明与人工修正 -->
+      <OOCard
+        v-if="onlineItem"
+        class="oo-mb-4"
+        title="企微会话量口径"
+        subtitle="线上售后数量取企业微信「一周小结」里的工作会话次数，可在截图识别后人工修正"
+      >
+        <template #actions>
+          <el-button
+            v-if="!editingSessions"
+            link
+            type="primary"
+            size="small"
+            title="修正会话量"
+            @click="startEditSessions"
+          >
+            修正
+          </el-button>
+        </template>
+
+        <div v-if="!editingSessions" class="sessions-view">
+          <div class="sessions-meta">
             <el-tag v-if="data.wechatSource === 'manual'" size="small" type="warning" effect="plain">人工修正</el-tag>
             <el-tag v-else-if="data.wechatSource === 'ai'" size="small" type="success" effect="plain">截图识别</el-tag>
             <el-tag v-else size="small" type="info" effect="plain">未提供企微小结</el-tag>
-            <span v-if="data.wechatMinutes" class="stat-sub-text">本周 {{ data.wechatMinutes }} 分钟</span>
+            <span v-if="data.wechatMinutes" class="sessions-sub oo-num">
+              本周 {{ data.wechatMinutes }} 分钟
+            </span>
           </div>
-        </el-card>
+          <span class="sessions-hint">识别不到企微小结时，可在此手工填写本周会话次数</span>
+        </div>
 
-        <el-card
-          v-for="it in data.items.filter((x) => x.category !== 'online_service')"
-          :key="it.category"
-          shadow="never"
-          class="stat-card"
-        >
-          <div class="stat-num">{{ it.count }}</div>
-          <div class="stat-label">{{ it.label }}</div>
-        </el-card>
-      </div>
+        <div v-else class="sessions-edit">
+          <el-input-number
+            v-model="sessionsInput"
+            :min="0"
+            :max="1000000"
+            :controls="false"
+            size="small"
+            class="sessions-input"
+            @keyup.enter="saveSessions"
+          />
+          <el-button type="primary" size="small" :loading="savingSessions" @click="saveSessions">保存</el-button>
+          <el-button size="small" @click="editingSessions = false">取消</el-button>
+        </div>
+      </OOCard>
 
+      <!-- 合计摘要 -->
       <div class="extra-row">
-        <el-tag type="info" effect="plain">线下合计：{{ data.offlineTotal }} 条</el-tag>
-        <el-tag type="info" effect="plain">下周计划：{{ data.planTotal }} 条</el-tag>
-        <el-tag type="info" effect="plain">任务总数：{{ data.total }} 条</el-tag>
+        <el-tag type="info" effect="plain">线下合计：<span class="oo-num">{{ data.offlineTotal }}</span> 条</el-tag>
+        <el-tag type="info" effect="plain">下周计划：<span class="oo-num">{{ data.planTotal }}</span> 条</el-tag>
+        <el-tag type="info" effect="plain">任务总数：<span class="oo-num">{{ data.total }}</span> 条</el-tag>
         <el-tag v-if="data.unclassifiedItems.length > 0" type="warning" effect="plain">
-          未分类：{{ data.unclassifiedItems.length }} 条
+          未分类：<span class="oo-num">{{ data.unclassifiedItems.length }}</span> 条
         </el-tag>
       </div>
 
@@ -155,14 +217,15 @@ async function saveSessions() {
       </el-alert>
 
       <!-- 未分类清单 -->
-      <section v-if="data.unclassifiedItems.length > 0" class="unc">
-        <header class="unc-head">
-          <h3>未分类清单</h3>
-          <span class="unc-sub">
-            这些任务标题未命中任何关键词，请手工归类；归类后统计会立即更新且不再自动刷新
-          </span>
-        </header>
-        <el-table :data="data.unclassifiedItems" size="small" border>
+      <OOCard
+        v-if="data.unclassifiedItems.length > 0"
+        class="oo-mb-4"
+        title="未分类清单"
+        subtitle="这些任务标题未命中任何关键词，请手工归类；归类后统计会立即更新且不再自动刷新"
+        flush
+      >
+        <OOToolbar dense :hint="`共 ${data.unclassifiedItems.length} 条待归类`" />
+        <el-table :data="data.unclassifiedItems" size="small" class="tbl">
           <el-table-column label="任务标题" min-width="240" prop="title" />
           <el-table-column label="分区" width="130">
             <template #default="{ row }">{{ row.partitionLabel }}</template>
@@ -190,106 +253,115 @@ async function saveSessions() {
             </template>
           </el-table-column>
         </el-table>
-      </section>
+      </OOCard>
 
       <!-- 线下明细 -->
-      <section class="offline">
-        <header class="unc-head">
-          <h3>线下工作明细</h3>
-          <span class="unc-sub">按统计分类归组，便于核对</span>
-        </header>
-        <el-empty v-if="offlineItems.length === 0" description="线下工作分区暂无任务" :image-size="70" />
+      <OOCard title="线下工作明细" subtitle="按统计分类归组，便于核对">
+        <OOEmptyState
+          v-if="offlineItems.length === 0"
+          variant="inbox"
+          title="线下工作分区暂无任务"
+          description="上传并识别线下工作截图后，这里会按培训 / 线下售后 / 售前归组展示"
+        />
         <div v-else class="offline-grid">
-          <el-card v-for="it in offlineItems" :key="it.category" shadow="never" class="stat-card">
-            <div class="stat-num">{{ it.count }}</div>
-            <div class="stat-label">{{ it.label }}</div>
-          </el-card>
+          <OOStatTile
+            v-for="it in offlineItems"
+            :key="it.category"
+            :label="it.label"
+            :icon="ICON_MAP[it.category] ?? '📌'"
+            :tone="TONE_MAP[it.category] ?? 'brand'"
+            :value="it.count"
+          />
         </div>
-      </section>
+      </OOCard>
     </template>
   </div>
 </template>
 
 <style scoped>
 .summary-tab {
-  padding-bottom: 24px;
+  padding-bottom: var(--oo-space-6);
 }
-.stat-grid,
-.offline-grid {
+
+.oo-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: var(--oo-space-1);
+}
+
+.stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-4);
 }
-.stat-card {
-  text-align: center;
+
+/* —— 企微会话量 —— */
+.sessions-view {
+  display: flex;
+  align-items: center;
+  gap: var(--oo-space-3);
+  flex-wrap: wrap;
 }
-.stat-card--online {
-  border-color: var(--el-color-primary-light-5);
+
+.sessions-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--oo-space-2);
+  flex-wrap: wrap;
 }
-.stat-num {
-  font-size: 30px;
-  font-weight: 700;
-  line-height: 1.2;
+
+.sessions-sub {
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
-.edit-btn {
-  font-size: 13px;
-  font-weight: 400;
-  padding: 0 0 0 4px;
-  vertical-align: middle;
+
+.sessions-hint {
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
+
 .sessions-edit {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 36px;
+  gap: var(--oo-space-2);
+  flex-wrap: wrap;
+  min-height: 40px;
 }
+
 .sessions-input {
   width: 110px;
 }
-.stat-label {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  margin-top: 4px;
-}
-.stat-sub {
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-.stat-sub-text {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
+
 .extra-row {
   display: flex;
-  gap: 8px;
+  gap: var(--oo-space-2);
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: var(--oo-space-4);
 }
+
 .rule-tip {
-  margin-bottom: 18px;
-  line-height: 1.7;
+  margin-bottom: var(--oo-space-5);
+  line-height: var(--oo-line-relaxed);
 }
-.unc,
-.offline {
-  margin-bottom: 22px;
+
+.tbl {
+  width: 100%;
 }
-.unc-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 8px;
+
+.offline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  gap: var(--oo-space-3);
 }
-.unc-head h3 {
-  margin: 0;
-  font-size: 15px;
-}
-.unc-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+
+@media (max-width: 560px) {
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+  .offline-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--oo-space-2);
+  }
 }
 </style>

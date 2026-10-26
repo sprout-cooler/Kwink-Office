@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import { imageApi, assetFileUrl, humanSize, type Capabilities, type ImageAssetDto } from "@/api/image-tool";
 import ImagePicker from "./ImagePicker.vue";
 import { downloadAsset } from "./useDownload";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOSectionTitle, OOToolbar } from "@/components/ui";
 
 const caps = ref<Capabilities | null>(null);
 const ids = ref<number[]>([]);
@@ -79,139 +80,311 @@ onMounted(async () => {
 
 <template>
   <div class="tab">
-    <el-alert type="info" :closable="false" class="hint">
+    <OOPageHeader
+      title="图片压缩"
+      description="按质量因子或目标体积压缩图片，压缩后体积不降反升时会如实告知"
+      badge="🗜"
+    />
+
+    <el-alert type="info" :closable="false" class="oo-mb-4">
       压缩会生成新图片并保留原图。<strong>目标体积模式</strong>会二分搜索质量因子，尽量贴近目标大小；
       若图片本身已高度压缩（如纯色截图），压不动时会如实告知，而不是给你一个更大的文件。
     </el-alert>
 
-    <ImagePicker ref="picker" v-model="ids" @update:model-value="loadForCompare" tips="选择一张要压缩的图片" />
+    <OOCard flush class="oo-mb-4">
+      <ImagePicker
+        ref="picker"
+        v-model="ids"
+        @update:model-value="loadForCompare"
+        tips="上传或从图库中挑一张要压缩的原图"
+      />
+    </OOCard>
 
-    <el-form label-width="96px" class="form">
-      <el-form-item label="压缩方式">
-        <el-radio-group v-model="mode">
-          <el-radio-button value="quality">质量因子</el-radio-button>
-          <el-radio-button value="target">目标体积</el-radio-button>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item v-if="mode === 'quality'" label="质量因子">
-        <el-slider
-          v-model="quality"
-          :min="caps?.quality.min ?? 1"
-          :max="caps?.quality.max ?? 100"
-          style="max-width: 300px"
-        />
-        <span class="num">{{ quality }}</span>
-      </el-form-item>
-      <el-form-item v-else label="目标体积">
-        <el-input-number v-model="targetKib" :min="1" :max="102400" :step="10" style="width: 160px" />
-        <span class="num">KB</span>
-      </el-form-item>
-      <el-form-item label="输出格式">
-        <el-select v-model="targetFormat" clearable placeholder="保持原格式" style="width: 180px">
-          <el-option v-for="f in caps?.outputFormats ?? []" :key="f.id" :label="f.label" :value="f.id" />
-        </el-select>
-        <span v-if="!targetFormat" class="num">
-          保持原格式{{ keepFormat ? "（纯压缩，不换格式）" : "（回退 JPEG）" }}
-        </span>
-      </el-form-item>
-      <el-form-item v-if="!targetFormat && mode === 'quality'">
-        <el-checkbox v-model="keepFormat">保持原格式（取消则转为 JPEG，压缩率更高）</el-checkbox>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" :loading="busy" :disabled="!ids.length" @click="run">开始压缩</el-button>
-        <span v-if="source" class="num">原图 {{ humanSize(source.size) }}</span>
-      </el-form-item>
-    </el-form>
+    <OOCard flush class="oo-mb-4">
+      <OOToolbar>
+        <template #left>
+          <span class="bar-title">压缩方式</span>
+          <el-radio-group v-model="mode" size="small">
+            <el-radio-button value="quality">质量因子</el-radio-button>
+            <el-radio-button value="target">目标体积</el-radio-button>
+          </el-radio-group>
+        </template>
+        <template #right>
+          <span v-if="source" class="count oo-num">原图 {{ humanSize(source.size) }}</span>
+          <el-button type="primary" :loading="busy" :disabled="!ids.length" @click="run">
+            开始压缩
+          </el-button>
+        </template>
+      </OOToolbar>
 
-    <div v-if="result && verdict" class="result">
-      <img :src="assetFileUrl(result.id)" :alt="result.filename" />
-      <div class="result-info">
-        <div><strong>{{ result.filename }}</strong></div>
-        <div>{{ result.width }}×{{ result.height }}</div>
-        <div class="sizes">
-          <span class="old">{{ humanSize(verdict.original) }}</span>
-          <span class="arrow">→</span>
-          <span class="new">{{ humanSize(verdict.compressed) }}</span>
-          <el-tag
-            v-if="verdict.ratio > 0"
-            type="success"
-            size="small"
-          >体积减少 {{ verdict.ratio }}%</el-tag>
+      <div class="card-pad" v-loading="busy">
+        <el-form label-width="96px">
+          <el-form-item v-if="mode === 'quality'" label="质量因子">
+            <div class="ctl">
+              <el-slider
+                v-model="quality"
+                :min="caps?.quality.min ?? 1"
+                :max="caps?.quality.max ?? 100"
+                class="ctl-slider"
+              />
+              <span class="num oo-num">{{ quality }}</span>
+            </div>
+            <p class="hint-text">数值越低体积越小，画质损失也越明显。</p>
+          </el-form-item>
+          <el-form-item v-else label="目标体积">
+            <el-input-number v-model="targetKib" :min="1" :max="102400" :step="10" class="oo-field-w oo-field-w-md" />
+            <span class="num oo-num">KB</span>
+            <p class="hint-text">系统会二分搜索质量因子，尽量贴近这个大小；压不到时如实告知。</p>
+          </el-form-item>
+          <el-form-item label="输出格式">
+            <el-select v-model="targetFormat" clearable placeholder="保持原格式" class="oo-field-w oo-field-w-lg">
+              <el-option v-for="f in caps?.outputFormats ?? []" :key="f.id" :label="f.label" :value="f.id" />
+            </el-select>
+            <span v-if="!targetFormat" class="num">
+              保持原格式{{ keepFormat ? "（纯压缩，不换格式）" : "（回退 JPEG）" }}
+            </span>
+          </el-form-item>
+          <el-form-item v-if="!targetFormat && mode === 'quality'">
+            <el-checkbox v-model="keepFormat">保持原格式（取消则转为 JPEG，压缩率更高）</el-checkbox>
+          </el-form-item>
+        </el-form>
+      </div>
+    </OOCard>
+
+    <OOCard
+      title="压缩结果"
+      :subtitle="result ? `${result.width}×${result.height} · ${humanSize(result.size)}` : undefined"
+    >
+      <template #actions>
+        <el-button
+          v-if="result"
+          size="small"
+          type="primary"
+          plain
+          @click="downloadAsset(result)"
+        >
+          <span class="oo-btn-icon"><OOIcon name="download" :size="14" /></span>
+          下载
+        </el-button>
+      </template>
+
+      <template v-if="result && verdict">
+        <!-- 前后对比：左原图 / 右压缩后，中间一条分隔线 -->
+        <div class="compare">
+          <figure class="compare-side">
+            <div class="compare-frame">
+              <img v-if="source" :src="assetFileUrl(source.id)" :alt="source.filename" />
+              <span v-else class="compare-none">原图不可用</span>
+            </div>
+            <figcaption class="compare-cap">
+              <span class="compare-cap-title">原图</span>
+              <span class="compare-cap-val oo-num">{{ humanSize(verdict.original) }}</span>
+            </figcaption>
+          </figure>
+
+          <div class="compare-divider" aria-hidden="true"></div>
+
+          <figure class="compare-side">
+            <div class="compare-frame">
+              <img :src="assetFileUrl(result.id)" :alt="result.filename" />
+            </div>
+            <figcaption class="compare-cap">
+              <span class="compare-cap-title">压缩后</span>
+              <span class="compare-cap-val oo-num">{{ humanSize(verdict.compressed) }}</span>
+            </figcaption>
+          </figure>
+        </div>
+
+        <div class="verdict-row">
+          <el-tag v-if="verdict.ratio > 0" type="success" size="small">
+            体积减少 {{ verdict.ratio }}%
+          </el-tag>
           <el-tag v-else-if="verdict.ratio < 0" type="warning" size="small">
             反而增大 {{ Math.abs(verdict.ratio) }}%
           </el-tag>
+          <el-tag v-else type="info" size="small">体积基本持平</el-tag>
+          <el-tag v-if="mode === 'target' && verdict.reached === false" type="warning" size="small">
+            未达到目标体积
+          </el-tag>
         </div>
-        <el-tag v-if="mode === 'target' && verdict.reached === false" type="warning" size="small">
-          未达到目标体积
-        </el-tag>
-        <p v-if="verdict.hint" class="hint-text">{{ verdict.hint }}</p>
-        <el-button size="small" type="primary" plain @click="downloadAsset(result)">下载</el-button>
-      </div>
-    </div>
+
+        <OOSectionTitle
+          class="oo-mt-4"
+          title="处理说明"
+          description="压缩后的新图片已同时保存到「我的图库」，原图保持不变"
+        />
+        <p v-if="verdict.hint" class="hint-text hint-warn">{{ verdict.hint }}</p>
+      </template>
+
+      <OOEmptyState
+        v-else
+        variant="inbox"
+        title="还没有压缩结果"
+        description="选好图片与压缩方式后点击「开始压缩」，会在这里对比压缩前后的体积"
+      />
+    </OOCard>
   </div>
 </template>
 
 <style scoped>
 .tab {
-  max-width: 860px;
+  max-width: 960px;
 }
-.hint {
-  margin-bottom: 14px;
+
+.oo-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -2px;
+  margin-right: 4px;
 }
-.form {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border-tertiary, #ebeef5);
+
+/* —— 工具条 —— */
+.bar-title {
+  font-size: var(--oo-text-sm);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
 }
-.num {
-  margin-left: 12px;
-  font-size: 13px;
-  color: #909399;
+
+.count {
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
-.result {
-  display: flex;
-  gap: 16px;
-  margin-top: 16px;
-  padding: 12px;
-  border: 1px solid var(--color-border-tertiary, #ebeef5);
-  border-radius: 8px;
+
+.card-pad {
+  padding: var(--oo-space-4) var(--oo-space-5) var(--oo-space-5);
 }
-.result img {
-  max-width: 220px;
-  max-height: 160px;
-  object-fit: contain;
-  background: #f5f7fa;
-  border-radius: 6px;
-}
-.result-info {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
-  font-size: 13px;
-  color: #606266;
-}
-.sizes {
+
+/* —— 参数控件 —— */
+.ctl {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--oo-space-3);
+  width: 100%;
+  max-width: 420px;
 }
-.old {
-  color: #909399;
-  text-decoration: line-through;
+
+.ctl-slider {
+  flex: 1;
+  min-width: 0;
 }
-.new {
-  font-weight: 500;
-  color: #303133;
+
+.num {
+  min-width: 40px;
+  font-size: var(--oo-text-sm);
+  color: var(--oo-text-secondary);
 }
-.arrow {
-  color: #c0c4cc;
-}
+
 .hint-text {
+  margin-top: 2px;
+  font-size: var(--oo-text-xs);
+  line-height: var(--oo-line-relaxed);
+  color: var(--oo-text-tertiary);
+}
+
+.hint-warn {
+  margin-top: var(--oo-space-2);
+  color: var(--oo-warning-text);
+}
+
+/* —— 前后对比 —— */
+.compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  gap: var(--oo-space-4);
+  align-items: start;
+}
+
+.compare-side {
   margin: 0;
-  max-width: 340px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #e6a23c;
+  min-width: 0;
+}
+
+.compare-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  padding: var(--oo-space-3);
+  border-radius: var(--oo-radius-md);
+  border: 1px solid var(--oo-border-subtle);
+  /* 透明棋盘格底 */
+  background-color: var(--oo-bg-surface-3);
+  background-image: linear-gradient(45deg, var(--oo-bg-surface-2) 25%, transparent 25%, transparent 75%, var(--oo-bg-surface-2) 75%),
+    linear-gradient(45deg, var(--oo-bg-surface-2) 25%, transparent 25%, transparent 75%, var(--oo-bg-surface-2) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+.compare-frame img {
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: var(--oo-radius-xs);
+}
+
+.compare-none {
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+}
+
+.compare-divider {
+  align-self: stretch;
+  background: var(--oo-border-subtle);
+}
+
+.compare-cap {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--oo-space-3);
+  margin-top: var(--oo-space-2);
+  padding-top: var(--oo-space-2);
+  border-top: 1px solid var(--oo-border-subtle);
+}
+
+.compare-cap-title {
+  font-size: var(--oo-text-sm);
+  font-weight: var(--oo-weight-medium);
+  color: var(--oo-text-secondary);
+}
+
+.compare-cap-val {
+  font-size: var(--oo-text-sm);
+  color: var(--oo-text-primary);
+}
+
+.verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--oo-space-2);
+  margin-top: var(--oo-space-4);
+}
+
+/* —— 窄屏 —— */
+@media (max-width: 768px) {
+  .compare {
+    grid-template-columns: 1fr;
+    gap: var(--oo-space-3);
+  }
+  .compare-divider {
+    height: 1px;
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .tab {
+    max-width: 100%;
+  }
+  .card-pad {
+    padding: var(--oo-space-3) var(--oo-space-4) var(--oo-space-4);
+  }
+  .ctl {
+    flex-wrap: wrap;
+  }
+  .ctl-slider {
+    flex-basis: 100%;
+  }
 }
 </style>

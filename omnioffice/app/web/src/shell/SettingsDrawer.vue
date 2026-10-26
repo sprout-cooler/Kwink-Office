@@ -3,11 +3,12 @@
 // 分类设计：通用设置 / AI 模型（全局默认）/ 各模块独立 AI ——
 // 后续新增模块只需在模块注册表登记，这里自动出现该模块的配置项，无需改前端。
 import { onMounted, ref, watch } from "vue";
-import { ElDrawer, ElTabs, ElTabPane, ElCard, ElDescriptions, ElDescriptionsItem, ElTag, ElMessage, ElMessageBox, ElForm, ElFormItem, ElInputNumber, ElCollapse, ElCollapseItem, ElBadge, ElCheckbox, ElInput } from "element-plus";
+import { ElDrawer, ElTabs, ElTabPane, ElDescriptions, ElDescriptionsItem, ElTag, ElMessage, ElMessageBox, ElForm, ElFormItem, ElInputNumber, ElCollapse, ElCollapseItem, ElBadge, ElCheckbox, ElInput } from "element-plus";
 import { settingsApi, downloadSettingsFile, type SettingsPayload, type AppSettingMeta } from "@/api/settings";
 import { bizApi } from "@/api/biz-dashboard";
 import { API_BASE } from "@/api/client";
 import AiConfigForm from "./AiConfigForm.vue";
+import { OOCard, OOIcon } from "@/components/ui";
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ "update:modelValue": [val: boolean] }>();
@@ -180,11 +181,19 @@ async function onFilePicked(e: Event) {
 <template>
   <ElDrawer
     :model-value="modelValue"
-    title="设置"
     size="720px"
     direction="rtl"
+    :with-header="false"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <div class="oo-drawer-head">
+      <span class="oo-drawer-icon"><OOIcon name="settings" :size="18" /></span>
+      <h2 class="oo-drawer-title">设置</h2>
+      <el-button link class="oo-drawer-close" @click="emit('update:modelValue', false)">
+        <OOIcon name="close" :size="18" />
+      </el-button>
+    </div>
+
     <ElTabs v-model="tab" v-loading="loading" class="settings-tabs">
       <!-- ============ 应用配置（分类） ============ -->
       <ElTabPane name="config">
@@ -211,7 +220,7 @@ async function onFilePicked(e: Event) {
           />
 
           <!-- 分类一：通用设置 -->
-          <ElCard shadow="never" class="cfg-card">
+          <OOCard class="cfg-card">
             <template #header>
               <div class="card-head">
                 <b>通用设置</b>
@@ -236,10 +245,10 @@ async function onFilePicked(e: Event) {
               <ElButton type="primary" :loading="savingApp" @click="saveApp">保存通用设置</ElButton>
               <span class="field-hint">识别并发调整后需重启应用生效；其余项立即生效</span>
             </div>
-          </ElCard>
+          </OOCard>
 
           <!-- 分类四：配置备份与迁移 -->
-          <ElCard shadow="never" class="cfg-card">
+          <OOCard class="cfg-card">
             <template #header>
               <div class="card-head">
                 <b>配置备份与迁移</b>
@@ -261,10 +270,10 @@ async function onFilePicked(e: Event) {
             <div class="field-hint">
               默认不导出 API Key；导入时配置里为空的项表示「保持现状」，不会被清空。
             </div>
-          </ElCard>
+          </OOCard>
 
           <!-- 分类五：数据大屏地图 -->
-          <ElCard shadow="never" class="cfg-card">
+          <OOCard class="cfg-card">
             <template #header>
               <div class="card-head">
                 <b>数据大屏 · 地图服务</b>
@@ -281,7 +290,7 @@ async function onFilePicked(e: Event) {
                     type="password"
                     show-password
                     placeholder="粘贴腾讯位置服务 Key"
-                    style="width: 320px"
+                    class="oo-field-w oo-field-w-xl"
                   />
                   <ElButton type="primary" :loading="savingMapKey" @click="saveMapKey">保存</ElButton>
                   <ElButton v-if="mapKeyConfigured" @click="clearMapKey">清除</ElButton>
@@ -293,10 +302,10 @@ async function onFilePicked(e: Event) {
                 </div>
               </ElFormItem>
             </ElForm>
-          </ElCard>
+          </OOCard>
 
           <!-- 分类二：AI 模型（全局默认） -->
-          <ElCard shadow="never" class="cfg-card">
+          <OOCard class="cfg-card">
             <template #header>
               <div class="card-head">
                 <b>AI 模型（全局默认）</b>
@@ -310,10 +319,10 @@ async function onFilePicked(e: Event) {
                 @changed="reload"
               />
             </ElForm>
-          </ElCard>
+          </OOCard>
 
           <!-- 分类三：各模块独立 AI -->
-          <ElCard shadow="never" class="cfg-card">
+          <OOCard class="cfg-card">
             <template #header>
               <div class="card-head">
                 <b>各模块 AI 配置</b>
@@ -363,7 +372,7 @@ async function onFilePicked(e: Event) {
                 </ElCollapseItem>
               </ElCollapse>
             </div>
-          </ElCard>
+          </OOCard>
         </template>
       </ElTabPane>
 
@@ -375,7 +384,7 @@ async function onFilePicked(e: Event) {
             全能办公室是一个统一的工作入口，把分散在各系统的工作内容收拢到一处。内置周报模块，支持截图上传、AI 识别、数据校对与周报导出。
           </p>
 
-          <ElCard shadow="never" class="manual-card">
+          <OOCard class="manual-card">
             <template #header><b>1. 配置大模型（首次使用必读）</b></template>
             <ol>
               <li>点击左侧竖栏顶部的 <b>⚙ 设置</b>，进入「<b>应用配置</b>」页。</li>
@@ -407,9 +416,9 @@ async function onFilePicked(e: Event) {
               <li>也可以在<b>安装应用时</b>的向导中填写，效果相同。</li>
               <li>后续如需为不同模块指定不同模型，可在「<b>各模块 AI 配置</b>」中单独设置 —— 不填则继承全局默认。</li>
             </ol>
-          </ElCard>
+          </OOCard>
 
-          <ElCard shadow="never" class="manual-card">
+          <OOCard class="manual-card">
             <template #header><b>2. 上传任务截图</b></template>
             <ol>
               <li>进入「周报 → 任务上传」。</li>
@@ -425,9 +434,9 @@ async function onFilePicked(e: Event) {
               <li>重复图片（同 md5）自动跳过，不会重复入库。</li>
               <li>支持 PNG / JPEG / WEBP，默认单张 ≤ 10MB（可在设置中调整）。</li>
             </ol>
-          </ElCard>
+          </OOCard>
 
-          <ElCard shadow="never" class="manual-card">
+          <OOCard class="manual-card">
             <template #header><b>3. AI 识别</b></template>
             <ol>
               <li>上传完成后，点击顶部「开始识别」按钮。</li>
@@ -445,9 +454,9 @@ async function onFilePicked(e: Event) {
               <li><b>工单截图</b>：标题即为工作内容，预计时间即为对应日期。</li>
               <li><b>企微一周小结</b>：识别后不会生成任务条目，而是自动读取「处理了 N 次工作会话」的次数，显示在「工作汇总」页的线上售后卡片上（标记为「截图识别」）；识别不准时点卡片上的「修正」直接改数，修正后标记为「人工修正」。</li>
             </ol>
-          </ElCard>
+          </OOCard>
 
-          <ElCard shadow="never" class="manual-card">
+          <OOCard class="manual-card">
             <template #header><b>4. 数据校对</b></template>
             <ol>
               <li>进入「周报 → 识别校对」，按分区查看识别出的任务列表。</li>
@@ -457,9 +466,9 @@ async function onFilePicked(e: Event) {
               <li>校对完成后进入下一步导出。</li>
             </ol>
             <p class="manual-tip"><b>提示</b>：时间格式支持多种写法，系统会自动识别：2026-10-09、10月9日、Oct 9、周四、261012 等。系统不做猜测，无法解析的会标红让你手动修正。</p>
-          </ElCard>
+          </OOCard>
 
-          <ElCard shadow="never" class="manual-card">
+          <OOCard class="manual-card">
             <template #header><b>5. 周报导出</b></template>
             <ol>
               <li>进入「周报 → 预览与导出」，确认本周数据无误。</li>
@@ -474,9 +483,9 @@ async function onFilePicked(e: Event) {
               </li>
               <li>导出前检查未通过（低置信度未确认、时间无法解析等）时，导出按钮会禁用，按提示处理后再导出。</li>
             </ol>
-          </ElCard>
+          </OOCard>
 
-          <ElCard shadow="never" class="manual-card">
+          <OOCard class="manual-card">
             <template #header><b>6. 数据大屏（客户 / 出差 / 财务 / 工作量）</b></template>
             <ol>
               <li>左侧竖栏进入「<b>数据大屏</b>」，含六个功能页：总览看板、工作量、客户管理、出差与路径、财务管理、选择性分享。</li>
@@ -497,9 +506,9 @@ async function onFilePicked(e: Event) {
               <li><b>选择性分享</b>（财务数据涉敏）：勾选要分享的流水 → 生成链接 → 设有效期（最长 90 天）。<b>链接只显示一次</b>，请立即复制给对方；对方无需登录即可打开，但只能看到被勾选的记录。随时可在列表里撤销，撤销后链接立即失效。</li>
             </ol>
             <p class="manual-tip"><b>提示</b>：数据大屏的数据按应用账号隔离 —— 每个账号只能看到自己的数据，管理员也看不到别人的（除非显式分享）。</p>
-          </ElCard>
+          </OOCard>
 
-          <ElCard shadow="never" class="manual-card">
+          <OOCard class="manual-card">
             <template #header><b>常见问题</b></template>
             <p><b>Q：在哪里配置 AI？</b></p>
             <p>左侧竖栏顶部 ⚙ → 「应用配置」→ 「AI 模型（全局默认）」。这是识别功能的前提。</p>
@@ -517,7 +526,7 @@ async function onFilePicked(e: Event) {
             <p>腾讯位置服务对每个 Key 的每个接口限制日调用量（默认 1 万次）。换一个新 Key、在控制台申请提额（审核约 3 个工作日），或等次日 0 点配额重置。系统已对地址解析做 24 小时缓存，重复地址不会重复消耗配额。</p>
             <p><b>Q：分享出去的财务链接安全吗？</b></p>
             <p>链接只能看到你显式勾选的记录，且有到期时间、可随时撤销。明文令牌只在创建时显示一次，服务端只存它的哈希值 —— 即使数据库泄露也无法反推出可用的链接。</p>
-          </ElCard>
+          </OOCard>
         </div>
       </ElTabPane>
 
@@ -543,6 +552,36 @@ async function onFilePicked(e: Event) {
 </template>
 
 <style scoped>
+.oo-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--oo-space-2);
+  padding: var(--oo-space-4) var(--oo-space-5) var(--oo-space-2);
+}
+.oo-drawer-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--oo-radius-sm);
+  background: var(--oo-brand-soft);
+  color: var(--oo-brand);
+}
+.oo-drawer-title {
+  margin: 0;
+  font-size: var(--oo-text-lg);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
+}
+.oo-drawer-close {
+  margin-left: auto;
+  color: var(--oo-text-tertiary);
+}
+.oo-drawer-close:hover {
+  color: var(--oo-text-primary);
+}
+
 .settings-tabs {
   --el-tabs-header-height: 44px;
 }
@@ -551,39 +590,39 @@ async function onFilePicked(e: Event) {
   margin-right: 4px;
 }
 .cfg-alert {
-  margin-bottom: 14px;
+  margin-bottom: var(--oo-space-4);
 }
 .cfg-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--oo-space-4);
 }
 .card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--oo-space-2);
 }
 .card-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
   font-weight: normal;
 }
 .field-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
   line-height: 1.6;
 }
 .cfg-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding-top: 4px;
+  gap: var(--oo-space-2);
+  padding-top: var(--oo-space-1);
   flex-wrap: wrap;
 }
 .hidden-input {
   display: none;
 }
 .module-block {
-  padding: 12px 0;
-  border-top: 1px solid var(--el-border-color-lighter);
+  padding: var(--oo-space-3) 0;
+  border-top: 1px solid var(--oo-border-subtle);
 }
 .module-block:first-of-type {
   border-top: none;
@@ -592,67 +631,77 @@ async function onFilePicked(e: Event) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--oo-space-2);
   flex-wrap: wrap;
-  margin-bottom: 6px;
+  margin-bottom: var(--oo-space-2);
 }
 .module-title {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--oo-space-2);
 }
 .module-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
 .module-tags {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--oo-space-1);
+  flex-wrap: wrap;
 }
 .empty-hint {
-  padding: 24px 0;
+  padding: var(--oo-space-6) 0;
   text-align: center;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-sm);
 }
 /* ---- 用户手册 ---- */
 .manual {
-  padding: 0 4px 24px;
+  padding: 0 var(--oo-space-1) var(--oo-space-6);
   line-height: 1.7;
 }
 .manual h3 {
-  margin: 0 0 8px;
-  font-size: 18px;
+  margin: 0 0 var(--oo-space-2);
+  font-size: var(--oo-text-xl);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
 }
 .manual-intro {
-  color: var(--el-text-color-secondary);
-  margin: 0 0 16px;
+  color: var(--oo-text-secondary);
+  margin: 0 0 var(--oo-space-4);
 }
 .manual-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--oo-space-4);
 }
 .manual-card ol {
-  padding-left: 20px;
+  padding-left: var(--oo-space-5);
   margin: 0;
 }
 .manual-card li {
-  margin-bottom: 6px;
+  margin-bottom: var(--oo-space-2);
 }
 .manual-card code {
-  background: var(--el-fill-color-light);
+  background: var(--oo-bg-surface-3);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--oo-radius-xs);
   font-size: 0.9em;
+  font-family: var(--oo-font-mono);
 }
 .manual-card a {
-  color: var(--el-color-primary);
+  color: var(--oo-text-brand);
+  text-decoration: none;
+}
+.manual-card a:hover {
+  text-decoration: underline;
+  color: var(--oo-text-brand-hover);
 }
 .manual-tip {
-  margin-top: 12px;
-  padding: 8px 12px;
-  background: var(--el-color-warning-light-9);
-  border-radius: 4px;
+  margin-top: var(--oo-space-3);
+  padding: var(--oo-space-2) var(--oo-space-3);
+  background: var(--oo-warning-soft);
+  color: var(--oo-warning-text);
+  border-radius: var(--oo-radius-sm);
   font-size: 0.9em;
 }
 </style>

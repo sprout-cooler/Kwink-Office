@@ -11,6 +11,7 @@
  */
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { mapServiceHost } from "@/api/biz-dashboard";
+import { chartColor, onChartThemeChange } from "@/composables/chart-theme";
 
 /** 地图上的一个坐标点。 */
 type MapPoint = { lng: number; lat: number; title?: string };
@@ -87,7 +88,8 @@ function drawLayers() {
       map: mapInstance,
       styles: {
         default: new TMap.PolylineStyle({
-          color: "#185FA5",
+          // 路径线颜色跟随图表色板（随深浅色切换）
+          color: chartColor(0),
           width: 4,
           borderWidth: 0,
           lineCap: "round",
@@ -170,7 +172,10 @@ onBeforeUnmount(() => {
       class="bz-map-canvas"
       :style="{ height: props.height }"
     />
-    <div v-if="!ready && !failed" class="bz-map-loading">地图加载中…</div>
+    <div v-if="!ready && !failed" class="bz-map-loading">
+      <span class="oo-spin oo-spin-sm" aria-hidden="true" />
+      <span>地图加载中…</span>
+    </div>
   </div>
 </template>
 
@@ -181,7 +186,9 @@ onBeforeUnmount(() => {
 }
 .bz-map-canvas {
   width: 100%;
-  border-radius: var(--el-border-radius-lg);
+  border-radius: var(--oo-radius-lg);
+  border: 1px solid var(--oo-border-subtle);
+  box-shadow: var(--oo-shadow-sm);
   overflow: hidden;
 }
 .bz-map-loading {
@@ -190,10 +197,27 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
+  gap: var(--oo-space-2);
+  background: var(--oo-bg-surface-2);
+  color: var(--oo-text-secondary);
+  font-size: var(--oo-text-sm);
 }
 .bz-map-err {
   width: 100%;
+}
+
+/*
+ * 腾讯地图 SDK 自带的比例尺与版权文字是深色硬编码（#000 / #333），
+ * 落在深色主题的地图容器里几乎不可读（实测 1.21:1 / 1.38:1）。
+ * 这里用 :deep() 覆写为跟随主题的次要文字色。
+ */
+.bz-map-canvas :deep(.tmap-scale-text) {
+  color: var(--oo-text-secondary) !important;
+  text-shadow: 0 0 3px var(--oo-bg-surface);
+}
+
+.bz-map-canvas :deep(.logo-text) {
+  color: var(--oo-text-tertiary) !important;
+  text-shadow: 0 0 3px var(--oo-bg-surface);
 }
 </style>

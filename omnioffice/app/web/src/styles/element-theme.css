@@ -53,6 +53,33 @@
   color: var(--oo-text-brand-hover);
 }
 
+/*
+ * 禁用态：EP 默认把 primary 按钮置灰成「白字 + 浅紫底」，
+ * 实测只有 1.92:1，完全读不出来。
+ * 改为「次要文字色 + 表面色底」，保持可辨识
+ * （浅色 #5A6478 on #EEF1F7 = 5.26:1；深色 #9BA3B4 on #262B36 = 5.60:1）
+ * 同时通过降低底色对比明确表达禁用。
+ */
+.el-button.is-disabled,
+.el-button.is-disabled:hover,
+.el-button.is-disabled:focus {
+  background-color: var(--oo-bg-surface-3);
+  border-color: var(--oo-border-subtle);
+  color: var(--oo-text-secondary);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover,
+.el-button--primary.is-disabled:focus {
+  background: var(--oo-bg-surface-3);
+  border-color: var(--oo-border-subtle);
+  color: var(--oo-text-secondary);
+  box-shadow: none;
+  filter: none;
+}
+
 .el-button--success {
   --el-button-bg-color: var(--oo-success);
   --el-button-border-color: var(--oo-success);
@@ -167,6 +194,34 @@
 
 .el-form-item__error {
   font-size: var(--oo-text-xs);
+}
+
+/*
+ * 窄屏表单改为上下堆叠。
+ *
+ * 【为什么】
+ * EP 的 label-width 是固定像素（如 96px），内容区被压到只剩 160px，
+ * 而 el-slider / el-select 的固有宽度撑破容器 → 横向溢出。
+ * 窄屏改成「标签在上、内容在下」，标签不再占固定宽度，内容拿到整行。
+ */
+@media (max-width: 640px) {
+  .el-form--label-right .el-form-item,
+  .el-form--label-left .el-form-item {
+    display: block;
+  }
+
+  .el-form--label-right .el-form-item__label,
+  .el-form--label-left .el-form-item__label {
+    width: auto !important;
+    justify-content: flex-start;
+    padding: 0 0 var(--oo-space-1);
+    line-height: 1.5;
+  }
+
+  .el-form--label-right .el-form-item__content,
+  .el-form--label-left .el-form-item__content {
+    margin-left: 0 !important;
+  }
 }
 
 /* ------------------------------------------------------------
@@ -433,6 +488,37 @@ html.dark .el-loading-mask {
   font-size: var(--oo-text-sm);
 }
 
+/*
+ * 描述文字必须与标题区分层级。
+ *
+ * 【为什么需要这么高的优先级】
+ * EP 源码里有：
+ *   .el-alert--info.is-light .el-alert__description { color: var(--el-color-info) }
+ *   .el-alert--success.is-light .el-alert__description { ... }
+ *   …… 每种类型一条，specificity 都是 (0,3,0)。
+ * 我们自己的 `.el-alert__description` 只有 (0,1,0)，会被它们压掉。
+ * 所以这里必须写成 `.el-alert.is-light .el-alert__description`（0,3,0）
+ * 才能稳定生效 —— 否则 info 类型的描述会继承 info 色。
+ *
+ * 【实测】
+ * info 类型描述继承品牌色 #4C6FFF，压在 --oo-brand-soft(#EEF2FF) 上只有 3.45:1；
+ * 改用次要文字色 #5A6478 → 5.69:1。
+ */
+.el-alert.is-light .el-alert__description {
+  color: var(--oo-text-secondary);
+  font-size: var(--oo-text-sm);
+  line-height: 1.6;
+}
+
+html.dark .el-alert.is-light .el-alert__description {
+  color: var(--oo-text-secondary);
+}
+
+/* 标题同理：类型色只用于图标与底色，标题本身保持次要色以保证层级与可读性 */
+.el-alert.is-light .el-alert__title {
+  color: var(--oo-text-primary);
+}
+
 .el-message {
   border-radius: var(--oo-radius-md);
   border: 1px solid var(--oo-border-subtle);
@@ -472,6 +558,20 @@ html.dark .el-loading-mask {
   font-weight: var(--oo-weight-medium);
 }
 
+/*
+ * 选中态填充色不能直接用 --el-color-primary（= --oo-brand #4C6FFF），
+ * 实测白字压 #4C6FFF 只有 4.18:1，达不到正文 4.5:1。
+ *
+ * EP 原生就提供了 --el-radio-button-checked-bg-color / -border-color / -text-color
+ * 三个变量，直接覆写最稳（不必与 EP 的选择器优先级较劲）：
+ *   浅色 #3559E6 → 白字 5.64:1；深色 #4260E8 → 白字 5.16:1。
+ */
+.el-radio-button {
+  --el-radio-button-checked-bg-color: var(--oo-brand-fill);
+  --el-radio-button-checked-border-color: var(--oo-brand-fill);
+  --el-radio-button-checked-text-color: var(--oo-brand-on);
+}
+
 .el-radio-button:first-child .el-radio-button__inner {
   border-top-left-radius: var(--oo-radius-md);
   border-bottom-left-radius: var(--oo-radius-md);
@@ -486,6 +586,25 @@ html.dark .el-loading-mask {
 .el-radio__label {
   color: var(--oo-text-primary);
   font-size: var(--oo-text-sm);
+  /* 允许长文案换行：EP 默认 nowrap，窄屏下会把容器撑破 */
+  white-space: normal;
+  word-break: break-word;
+}
+
+/*
+ * 选择器未选中时显示的提示文字（如「全部类型」「全部客户」），
+ * EP 默认用 --el-text-color-placeholder（#7D879C = 3.61:1，不达标）。
+ * 这类文字是真实可见正文（不是输入框里的灰字），改用三级文字色（4.64:1）。
+ */
+.el-select__placeholder.is-transparent {
+  color: var(--oo-text-tertiary);
+}
+
+/* 复选框/单选框选中时，EP 会把 label 染成 primary 色；
+ * #4C6FFF 在白底只有 4.18:1，改用 --oo-text-brand（5.64:1）。 */
+.el-checkbox__input.is-checked + .el-checkbox__label,
+.el-radio__input.is-checked + .el-radio__label {
+  color: var(--oo-text-brand);
 }
 
 /* ------------------------------------------------------------

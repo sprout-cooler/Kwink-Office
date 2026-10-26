@@ -2,6 +2,8 @@
 /** 工作量：双口径（周报工时只读 + 独立台账）。 */
 import { computed, onMounted, ref } from "vue";
 import { bizApi, type BizTimeEntry, type WorkloadOverview } from "@/api/biz-dashboard";
+import { chartColor, chartTextColor, chartSplitLineColor } from "@/composables/chart-theme";
+import { OOCard, OOEmptyState, OOPageHeader, OOStatTile, OOToolbar } from "@/components/ui";
 import ChartBox from "./ChartBox.vue";
 
 const data = ref<WorkloadOverview | null>(null);
@@ -80,26 +82,41 @@ async function removeEntry(id: number) {
 
 const trendOption = computed(() => {
   const b = data.value?.buckets ?? [];
+  const text = chartTextColor();
+  const split = chartSplitLineColor();
   return {
     tooltip: { trigger: "axis" },
-    legend: { data: ["周报工时", "台账工时"], top: 0 },
+    legend: { data: ["周报工时", "台账工时"], top: 0, textStyle: { color: text } },
     grid: { left: 44, right: 16, top: 32, bottom: 28 },
-    xAxis: { type: "category", data: b.map((x) => x.label) },
-    yAxis: { type: "value", name: "小时" },
+    xAxis: {
+      type: "category",
+      data: b.map((x) => x.label),
+      axisLabel: { color: text },
+      axisLine: { lineStyle: { color: split } },
+    },
+    yAxis: {
+      type: "value",
+      name: "小时",
+      nameTextStyle: { color: text },
+      axisLabel: { color: text },
+      splitLine: { lineStyle: { color: split } },
+    },
     series: [
       {
         name: "周报工时",
         type: "bar",
         stack: "t",
+        barMaxWidth: 26,
         data: b.map((x) => x.weeklyHours),
-        itemStyle: { color: "#378ADD" },
+        itemStyle: { color: chartColor(0), borderRadius: [4, 4, 0, 0] },
       },
       {
         name: "台账工时",
         type: "bar",
         stack: "t",
+        barMaxWidth: 26,
         data: b.map((x) => x.manualHours),
-        itemStyle: { color: "#5DCAA5" },
+        itemStyle: { color: chartColor(1), borderRadius: [4, 4, 0, 0] },
       },
     ],
   };
@@ -107,47 +124,92 @@ const trendOption = computed(() => {
 
 const customerOption = computed(() => {
   const rows = data.value?.byCustomer ?? [];
+  const text = chartTextColor();
+  const split = chartSplitLineColor();
   return {
     tooltip: { trigger: "axis" },
     grid: { left: 110, right: 24, top: 16, bottom: 28 },
-    xAxis: { type: "value", name: "小时" },
+    xAxis: {
+      type: "value",
+      name: "小时",
+      nameTextStyle: { color: text },
+      axisLabel: { color: text },
+      splitLine: { lineStyle: { color: split } },
+    },
     yAxis: {
       type: "category",
       data: rows.map((r) => r.customerName).reverse(),
+      axisLabel: { color: text },
+      axisLine: { lineStyle: { color: split } },
     },
     series: [
       {
         type: "bar",
+        barMaxWidth: 20,
         data: rows.map((r) => r.hours).reverse(),
-        itemStyle: { color: "#639922" },
+        itemStyle: { color: chartColor(6), borderRadius: [0, 6, 6, 0] },
       },
     ],
   };
 });
+
+/** KPI 汇总：双口径合计与台账条数。 */
+const weeklyTotal = computed(() =>
+  (data.value?.buckets ?? []).reduce((s, x) => s + x.weeklyHours, 0),
+);
+const manualTotal = computed(() =>
+  (data.value?.buckets ?? []).reduce((s, x) => s + x.manualHours, 0),
+);
+const grandTotal = computed(() => weeklyTotal.value + manualTotal.value);
 </script>
 
 <template>
   <div class="bz-workload">
-    <el-alert
-      v-if="error"
-      type="error"
-      :closable="false"
-      :title="error"
-      show-icon
-      class="mb"
-    />
+    <OOPageHeader
+      title="工作量"
+      description="双口径统计：周报工时来自周报识别结果（只读），台账工时在此单独登记"
+    >
+      <el-radio-group v-model="granularity" size="small" @change="load">
+        <el-radio-button value="day">按日</el-radio-button>
+        <el-radio-button value="week">按周</el-radio-button>
+        <el-radio-button value="month">按月</el-radio-button>
+      </el-radio-group>
+    </OOPageHeader>
 
-    <el-card shadow="never" class="mb">
-      <template #header>
-        <div class="hdr">
-          <span>登记工时（独立台账）</span>
-          <el-radio-group v-model="granularity" size="small" @change="load">
-            <el-radio-button value="day">按日</el-radio-button>
-            <el-radio-button value="week">按周</el-radio-button>
-            <el-radio-button value="month">按月</el-radio-button>
-          </el-radio-group>
-        </div>
-      </template>
+    <el-alert v-if="error" type="error" :closable="false" :title="error" show-icon class="mb" />
+
+    <div class="bz-kpis">
+      <OOStatTile
+        label="周报工时"
+        icon="W"
+        tone="brand"
+        :value="`${weeklyTotal.toFixed(1)} h`"
+        hint="只读，来自周报识别结果"
+      />
+      <OOStatTile
+        label="台账工时"
+        icon="L"
+        tone="teal"
+        :value="`${manualTotal.toFixed(1)} h`"
+        hint="独立台账登记"
+      />
+      <OOStatTile
+        label="合计工时"
+        icon="Σ"
+        tone="purple"
+        :value="`${grandTotal.toFixed(1)} h`"
+        hint="双口径合并统计"
+      />
+      <OOStatTile
+        label="台账条数"
+        icon="N"
+        tone="amber"
+        :value="entries.length"
+        hint="当前筛选范围内的记录"
+      />
+    </div>
+
+    <OOCard title="登记工时（独立台账）" subtitle="填写事项与工时后登记，与周报数据互不影响" class="mb">
       <div class="bz-form-row">
         <el-input v-model="form.title" placeholder="工作事项（如：XX客户现场调试）" class="f-title" />
         <el-input-number v-model="form.hours" :min="0" :max="24" :step="0.5" placeholder="工时" />
@@ -165,29 +227,29 @@ const customerOption = computed(() => {
       <p class="bz-hint">
         周报工时来自周报识别结果（只读，不改动周报数据）；此处登记的是独立台账工时。
       </p>
-    </el-card>
+    </OOCard>
 
-    <el-row :gutter="16">
-      <el-col :span="24" :md="12">
-        <el-card shadow="never">
-          <template #header>工时趋势</template>
-          <ChartBox type="bar" :option="trendOption" height="260px" />
-        </el-card>
-      </el-col>
-      <el-col :span="24" :md="12">
-        <el-card shadow="never">
-          <template #header>客户工时排行</template>
-          <ChartBox type="bar" :option="customerOption" height="260px" />
-        </el-card>
-      </el-col>
-    </el-row>
+    <div class="bz-charts">
+      <OOCard title="工时趋势" subtitle="按当前时间粒度展示双口径堆叠">
+        <ChartBox type="bar" :option="trendOption" height="260px" />
+      </OOCard>
+      <OOCard title="客户工时排行" subtitle="按客户维度合并统计">
+        <ChartBox type="bar" :option="customerOption" height="260px" />
+      </OOCard>
+    </div>
 
-    <el-card shadow="never" class="mt">
-      <template #header>工时台账明细</template>
-      <el-table :data="entries" size="small" empty-text="暂无台账工时记录" v-loading="loading">
+    <OOCard title="工时台账明细" :subtitle="`共 ${entries.length} 条`" flush class="mt">
+      <el-table :data="entries" size="small" v-loading="loading">
+        <template #empty>
+          <OOEmptyState variant="inbox" title="暂无台账工时记录" description="在上方登记第一条工时台账" />
+        </template>
         <el-table-column prop="taskDate" label="日期" width="110" />
-        <el-table-column prop="title" label="事项" />
-        <el-table-column prop="hours" label="工时(h)" width="90" align="right" />
+        <el-table-column prop="title" label="事项" min-width="180" />
+        <el-table-column label="工时(h)" width="90" align="right">
+          <template #default="{ row }">
+            <span class="oo-num">{{ Number(row.hours).toFixed(1) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="归属客户" width="140">
           <template #default="{ row }">
             {{ customers.find((c) => c.id === row.customerId)?.name ?? "—" }}
@@ -199,21 +261,28 @@ const customerOption = computed(() => {
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </OOCard>
   </div>
 </template>
 
 <style scoped>
-.hdr {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.bz-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-5);
 }
+
+.bz-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+  gap: var(--oo-space-4);
+}
+
 .bz-form-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--oo-space-2);
 }
 .f-title {
   flex: 1 1 240px;
@@ -222,14 +291,21 @@ const customerOption = computed(() => {
   width: 180px;
 }
 .bz-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  margin: var(--oo-space-3) 0 0;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
 .mb {
-  margin-bottom: 16px;
+  margin-bottom: var(--oo-space-5);
 }
 .mt {
-  margin-top: 16px;
+  margin-top: var(--oo-space-5);
+}
+
+@media (max-width: 560px) {
+  .bz-kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--oo-space-2);
+  }
 }
 </style>

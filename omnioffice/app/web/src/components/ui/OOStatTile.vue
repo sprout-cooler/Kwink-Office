@@ -104,7 +104,10 @@ withDefaults(
   border-radius: var(--oo-radius-sm);
   font-size: 15px;
   background: var(--oo-brand-soft);
-  color: var(--oo-brand);
+  /* 用 --oo-text-brand 而非 --oo-brand：
+   * 深色下 --oo-brand 是暗色 #4C6FFF，压在 brand-soft 底上只有 3.47:1；
+   * --oo-text-brand 深色下是 #8AA0FF → 5.91:1，浅色下是 #3559E6 → 5.64:1。 */
+  color: var(--oo-text-brand);
 }
 
 .oo-stat-teal .oo-stat-icon {

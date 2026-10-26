@@ -293,59 +293,61 @@ async function save() {
 
 <style scoped>
 .ai-block {
-  padding: 4px 0 0;
+  padding: var(--oo-space-1) 0 0;
 }
 .provider-note {
-  margin-bottom: 14px;
+  margin-bottom: var(--oo-space-3);
   line-height: 1.6;
 }
 .domain-tag {
-  margin-top: 6px;
+  margin-top: var(--oo-space-2);
 }
 /* 下拉内每个模型选项：名称 + 档位角标 + 场景说明 */
 .model-opt {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px 0;
+  padding: var(--oo-space-1) 0;
   line-height: 1.45;
 }
 .model-opt-name {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  gap: var(--oo-space-1);
+  font-family: var(--oo-font-mono);
+  font-size: var(--oo-text-sm);
 }
 .model-opt-desc {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
   white-space: normal;
   line-height: 1.5;
 }
 .field-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
   line-height: 1.6;
-  margin-top: 2px;
+  margin-top: var(--oo-space-1);
 }
 .field-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  gap: var(--oo-space-2);
+  margin-top: var(--oo-space-1);
+  flex-wrap: wrap;
 }
 .test-result {
-  margin: 8px 0;
+  margin: var(--oo-space-2) 0;
 }
 .ai-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding-top: 6px;
+  gap: var(--oo-space-2);
+  padding-top: var(--oo-space-2);
+  flex-wrap: wrap;
 }
 .ai-tip {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
 </style>

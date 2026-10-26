@@ -13,6 +13,7 @@ import {
 } from "@/api/weekly-report";
 import TemplateVersionDialog from "./TemplateVersionDialog.vue";
 import ExportHistoryPanel from "./ExportHistoryPanel.vue";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOToolbar } from "@/components/ui";
 
 const versionDialog = ref(false);
 const historyRef = ref<InstanceType<typeof ExportHistoryPanel> | null>(null);
@@ -156,38 +157,52 @@ async function onVersionChanged() {
 
 <template>
   <div v-loading="loading" class="export-tab">
+    <OOPageHeader
+      title="预览与导出"
+      description="管理周报模板版本、通过导出前检查，最后导出 Excel 与区域截图双产物"
+      badge="📦"
+    >
+      <el-button :loading="loading" @click="refreshAll">
+        <span class="oo-btn-icon"><OOIcon name="refresh" :size="16" /></span>
+        刷新
+      </el-button>
+    </OOPageHeader>
+
     <!-- 1. 模板管理 -->
-    <el-card shadow="never" class="blk">
-      <template #header>
-        <div class="card-head">
-          <b>1. 周报模板</b>
-          <span class="card-sub">模板决定导出表格的样式与结构；可随时切换版本，导出仅使用当前选中版本；未选择时默认最新版</span>
-        </div>
-      </template>
+    <OOCard
+      class="blk"
+      title="1. 周报模板"
+      subtitle="模板决定导出表格的样式与结构；可随时切换版本，导出仅使用当前选中版本；未选择时默认最新版"
+      flush
+    >
+      <OOToolbar>
+        <template #left>
+          <el-select
+            v-model="boundId"
+            placeholder="选择本批次使用的模板"
+            class="tpl-select"
+            @change="bind"
+          >
+            <el-option
+              v-for="t in templates"
+              :key="t.id"
+              :label="`v${t.version} · ${t.filename}（${fmtSize(t.size)}）`"
+              :value="t.id"
+            />
+          </el-select>
+          <el-tag v-if="bound" type="success" effect="plain">当前绑定 v{{ bound.version }}</el-tag>
+        </template>
+        <template #right>
+          <el-button size="small" @click="versionDialog = true">版本管理 / 对比 / 回滚</el-button>
+          <el-button type="primary" :loading="uploadingTpl" @click="pickTemplate">
+            <span class="oo-btn-icon"><OOIcon name="upload" :size="16" /></span>
+            上传模板文件（.xlsx）
+          </el-button>
+        </template>
+      </OOToolbar>
 
-      <div class="tpl-bar">
-        <el-button type="primary" :loading="uploadingTpl" @click="pickTemplate">
-          上传模板文件（.xlsx）
-        </el-button>
-        <el-select
-          v-model="boundId"
-          placeholder="选择本批次使用的模板"
-          class="tpl-select"
-          @change="bind"
-        >
-          <el-option
-            v-for="t in templates"
-            :key="t.id"
-            :label="`v${t.version} · ${t.filename}（${fmtSize(t.size)}）`"
-            :value="t.id"
-          />
-        </el-select>
-        <el-tag v-if="bound" type="success" effect="plain">当前绑定 v{{ bound.version }}</el-tag>
-        <el-button size="small" @click="versionDialog = true">版本管理 / 对比 / 回滚</el-button>
-      </div>
-
-      <el-table v-if="templates.length" :data="templates" size="small" border class="tpl-tbl">
-        <el-table-column label="版本" width="70">
+      <el-table v-if="templates.length" :data="templates" size="small" class="tpl-tbl">
+        <el-table-column label="版本" width="80">
           <template #default="{ row }">
             <el-tag size="small" :type="row.id === boundId ? 'success' : 'info'" effect="plain">
               v{{ row.version }}
@@ -195,42 +210,48 @@ async function onVersionChanged() {
           </template>
         </el-table-column>
         <el-table-column label="文件名" prop="filename" min-width="200" />
-        <el-table-column label="大小" width="90">
-          <template #default="{ row }">{{ fmtSize(row.size) }}</template>
+        <el-table-column label="大小" width="100">
+          <template #default="{ row }"><span class="oo-num">{{ fmtSize(row.size) }}</span></template>
         </el-table-column>
-        <el-table-column label="结构校验" width="100">
+        <el-table-column label="结构校验" width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="row.anchorOk ? 'success' : 'danger'" effect="plain">
               {{ row.anchorOk ? "通过" : "不通过" }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90">
+        <el-table-column label="操作" width="90" align="center">
           <template #default="{ row }">
             <el-button link type="danger" size="small" @click="removeTemplate(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-else description="尚未上传模板 —— 导出需要先上传周报模板文件" :image-size="70" />
-    </el-card>
+      <OOEmptyState
+        v-else
+        variant="folder"
+        title="尚未上传模板"
+        description="导出需要先上传周报模板文件（.xlsx），上传后会自动绑定到本批次"
+      />
+    </OOCard>
 
     <TemplateVersionDialog v-model="versionDialog" :templates="templates" @changed="onVersionChanged" />
 
     <!-- 2. 导出前检查 -->
-    <el-card shadow="never" class="blk">
-      <template #header>
-        <div class="card-head">
-          <b>2. 导出前检查</b>
-          <el-tag v-if="readiness?.ready" type="success" effect="plain">可以导出</el-tag>
-          <el-tag v-else type="warning" effect="plain">有未处理项</el-tag>
-        </div>
+    <OOCard
+      class="blk"
+      title="2. 导出前检查"
+      subtitle="卡点未处理完时导出会被拦截，先把下面几项处理掉"
+    >
+      <template #actions>
+        <el-tag v-if="readiness?.ready" type="success" effect="plain">可以导出</el-tag>
+        <el-tag v-else type="warning" effect="plain">有未处理项</el-tag>
       </template>
 
       <div v-if="readiness" class="ready-box">
         <div class="ready-line">
-          <span>本周任务：<b>{{ readiness.taskCount }}</b> 条</span>
+          <span>本周任务：<b class="oo-num">{{ readiness.taskCount }}</b> 条</span>
           <span v-if="readiness.unclassified > 0">
-            未分类 <b>{{ readiness.unclassified }}</b> 条（不阻断导出，可导出后留空）
+            未分类 <b class="oo-num">{{ readiness.unclassified }}</b> 条（不阻断导出，可导出后留空）
           </span>
         </div>
 
@@ -257,17 +278,14 @@ async function onVersionChanged() {
           </li>
         </ul>
       </div>
-    </el-card>
+    </OOCard>
 
     <!-- 3. 导出 -->
-    <el-card shadow="never" class="blk">
-      <template #header>
-        <div class="card-head">
-          <b>3. 导出双产物</b>
-          <span class="card-sub">Excel 保真文件 + 区域截图，成对产出</span>
-        </div>
-      </template>
-
+    <OOCard
+      class="blk"
+      title="3. 导出双产物"
+      subtitle="Excel 保真文件 + 区域截图，成对产出"
+    >
       <el-form label-width="100px" label-position="left" class="exp-form">
         <el-form-item label="截图口径">
           <el-radio-group v-model="scope">
@@ -278,7 +296,7 @@ async function onVersionChanged() {
         <el-form-item label="区域截图">
           <el-switch v-model="renderPng" />
           <span class="field-hint">
-            关闭则只导出 Excel（更快）。截图需容器内 LibreOffice，192DPI 保��清晰度
+            关闭则只导出 Excel（更快）。截图需容器内 LibreOffice，192DPI 保证清晰度
           </span>
         </el-form-item>
         <el-form-item>
@@ -289,6 +307,7 @@ async function onVersionChanged() {
             :disabled="!canExport"
             @click="doExport"
           >
+            <span class="oo-btn-icon"><OOIcon name="download" :size="17" /></span>
             导出
           </el-button>
           <span v-if="!hasTemplate" class="tip danger">请先上传并绑定模板</span>
@@ -297,160 +316,119 @@ async function onVersionChanged() {
           </span>
         </el-form-item>
       </el-form>
-    </el-card>
+    </OOCard>
 
     <!-- 4. 导出历史（跨批次全量：文件名 / 导出时间 / 所用模板及版本 / 下载 · 重命名 · 删除） -->
-    <el-card shadow="never" class="blk">
-      <template #header>
-        <div class="card-head">
-          <b>4. 导出历史</b>
-          <span class="card-sub">
-            包含所有周报批次的导出记录；文件同时落在 NAS 共享目录「omnioffice/exports」
-          </span>
-        </div>
-      </template>
-
+    <OOCard
+      class="blk"
+      title="4. 导出历史"
+      subtitle="包含所有周报批次的导出记录；文件同时落在 NAS 共享目录「omnioffice/exports」"
+      flush
+    >
       <ExportHistoryPanel ref="historyRef" />
-    </el-card>
+    </OOCard>
   </div>
 </template>
 
 <style scoped>
 .export-tab {
-  padding-bottom: 24px;
-  max-width: 980px;
+  padding-bottom: var(--oo-space-6);
+  max-width: 1080px;
 }
+
+.oo-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: var(--oo-space-1);
+}
+
 .blk {
-  margin-bottom: 16px;
+  margin-bottom: var(--oo-space-4);
 }
-.card-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.card-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  font-weight: normal;
-}
-.tpl-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
+
 .tpl-select {
   width: 320px;
+  max-width: 100%;
 }
+
 .tpl-tbl {
   width: 100%;
 }
+
 .ready-box {
-  line-height: 1.8;
+  line-height: var(--oo-line-relaxed);
 }
+
 .ready-line {
   display: flex;
-  gap: 20px;
-  font-size: 13px;
-  margin-bottom: 10px;
-  color: var(--el-text-color-secondary);
+  gap: var(--oo-space-5);
+  flex-wrap: wrap;
+  font-size: var(--oo-text-sm);
+  margin-bottom: var(--oo-space-3);
+  color: var(--oo-text-secondary);
 }
-.reason-list {
+
+.ready-line b {
+  color: var(--oo-text-primary);
+  font-weight: var(--oo-weight-semibold);
+}
+
+.reason-list,
+.notice-list {
   list-style: none;
   padding: 0;
   margin: 0;
 }
+
 .notice-list {
-  list-style: none;
-  padding: 0;
-  margin: 8px 0 0;
-  border-top: 1px dashed var(--el-border-color-lighter);
-  padding-top: 8px;
+  margin: var(--oo-space-2) 0 0;
+  border-top: 1px dashed var(--oo-border-default);
+  padding-top: var(--oo-space-2);
 }
+
+.reason-list li,
 .notice-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: var(--oo-space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--oo-space-2);
 }
-.reason-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
+
 .reason-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-secondary);
 }
+
 .exp-form :deep(.el-form-item) {
-  margin-bottom: 14px;
+  margin-bottom: var(--oo-space-4);
 }
+
 .field-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-left: 10px;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+  margin-left: var(--oo-space-3);
 }
+
 .tip {
-  font-size: 12px;
-  margin-left: 10px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  margin-left: var(--oo-space-3);
+  color: var(--oo-text-tertiary);
 }
+
 .tip.danger {
-  color: var(--el-color-danger);
+  color: var(--oo-danger-text);
 }
-/* 产物列表 */
-.art-list {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.art {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  padding: 10px 12px;
-}
-.art-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-.art-name {
-  font-weight: 600;
-  font-size: 13px;
-}
-.art-time {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-left: auto;
-}
-.art-files {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-  font-size: 13px;
-}
-.file-link {
-  color: var(--el-color-primary);
-  text-decoration: none;
-}
-.file-link:hover {
-  text-decoration: underline;
-}
-.file-gone {
-  color: var(--el-text-color-placeholder);
-}
-.art-err {
-  margin-top: 8px;
-}
-.art-preview {
-  margin-top: 10px;
-  max-width: 420px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 4px;
+
+@media (max-width: 768px) {
+  .tpl-select {
+    width: 100%;
+  }
+  .field-hint,
+  .tip {
+    margin-left: 0;
+    display: block;
+    margin-top: var(--oo-space-1);
+  }
 }
 </style>

@@ -267,14 +267,14 @@ const tripOption = computed(() => {
 <style scoped>
 .bz-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(168px, 100%), 1fr));
   gap: var(--oo-space-3);
   margin-bottom: var(--oo-space-5);
 }
 
 .bz-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
   gap: var(--oo-space-4);
 }
 

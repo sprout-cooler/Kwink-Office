@@ -84,12 +84,18 @@ function switchTo(m: "login" | "register") {
 
 <template>
   <div class="auth-wrap">
+    <!-- 背景光晕：两团品牌渐变的柔光，给纯净留白一点层次（克制，不抢内容） -->
+    <div class="auth-glow auth-glow-a" aria-hidden="true" />
+    <div class="auth-glow auth-glow-b" aria-hidden="true" />
+
     <div class="auth-card">
       <div class="auth-head">
-        <div class="auth-logo">全</div>
-        <div>
-          <div class="auth-title">全能办公室</div>
-          <div class="auth-sub">NAS 账号：{{ props.nasUser }}</div>
+        <div class="auth-logo" aria-hidden="true">
+          <span class="auth-logo-text">O</span>
+        </div>
+        <div class="auth-head-text">
+          <h1 class="auth-title">全能办公室</h1>
+          <p class="auth-sub">统一的工作入口 · NAS 账号 {{ props.nasUser }}</p>
         </div>
       </div>
 
@@ -160,9 +166,9 @@ function switchTo(m: "login" | "register") {
         </el-button>
       </el-form>
 
-      <div class="auth-foot">
+      <p class="auth-foot">
         账号与 NAS 账号一一绑定：换一个飞牛账号登录，看到的将是另一套独立数据。
-      </div>
+      </p>
     </div>
   </div>
 </template>
@@ -173,65 +179,171 @@ function switchTo(m: "login" | "register") {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--el-fill-color-lighter);
-  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  background: var(--oo-bg-app);
+  padding: var(--oo-space-6);
+  box-sizing: border-box;
 }
+
+/* 背景柔光：两团品牌色径向渐变，blur 后几乎不可察觉但让留白有呼吸 */
+.auth-glow {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  opacity: 0.9;
+  z-index: 0;
+}
+
+.auth-glow-a {
+  width: 520px;
+  height: 520px;
+  top: -160px;
+  left: -120px;
+  background: radial-gradient(circle, rgba(76, 111, 255, 0.45) 0%, transparent 68%);
+}
+
+.auth-glow-b {
+  width: 460px;
+  height: 460px;
+  bottom: -140px;
+  right: -90px;
+  background: radial-gradient(circle, rgba(124, 92, 240, 0.42) 0%, transparent 68%);
+}
+
+html.dark .auth-glow {
+  opacity: 0.45;
+}
+
+html.dark .auth-glow-a {
+  background: radial-gradient(circle, rgba(95, 125, 255, 0.4) 0%, transparent 68%);
+}
+
+html.dark .auth-glow-b {
+  background: radial-gradient(circle, rgba(143, 108, 245, 0.38) 0%, transparent 68%);
+}
+
 .auth-card {
-  width: 420px;
+  width: 440px;
   max-width: 100%;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 10px;
-  padding: 26px 26px 20px;
-  box-shadow: 0 6px 24px rgb(0 0 0 / 6%);
+  position: relative;
+  z-index: 1;
+  background: var(--oo-bg-surface);
+  border: 1px solid var(--oo-border-subtle);
+  border-radius: var(--oo-radius-2xl);
+  padding: 34px 32px 26px;
+  box-shadow: var(--oo-shadow-xl);
+  animation: oo-scale-in var(--oo-dur-slower) var(--oo-ease-out) both;
 }
+
+/* 卡片顶部一道品牌渐变细线。
+   用 inset 定位（不是 inset:0 0 auto 0），否则会被卡片的大圆角裁切成弧形残段。 */
+.auth-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 88px;
+  height: 3px;
+  border-radius: 0 0 var(--oo-radius-pill) var(--oo-radius-pill);
+  background: var(--oo-gradient-brand);
+}
+
 .auth-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-6);
 }
+
 .auth-logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background: var(--el-color-primary);
-  color: #fff;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--oo-radius-md);
+  background: var(--oo-gradient-brand);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  box-shadow: var(--oo-shadow-brand);
+  flex-shrink: 0;
 }
+
+.auth-logo-text {
+  color: #fff;
+  font-size: 22px;
+  font-weight: var(--oo-weight-bold);
+  line-height: 1;
+}
+
+.auth-head-text {
+  min-width: 0;
+}
+
 .auth-title {
-  font-size: 17px;
-  font-weight: 600;
+  margin: 0;
+  font-size: var(--oo-text-2xl);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
+  line-height: var(--oo-line-tight);
+  letter-spacing: -0.01em;
 }
+
 .auth-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  margin: 4px 0 0;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
+
 .auth-tip {
-  margin-bottom: 14px;
+  margin-bottom: var(--oo-space-4);
 }
+
 .auth-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-3);
+  flex-wrap: wrap;
 }
+
 .auth-switch {
-  font-size: 13px;
+  font-size: var(--oo-text-sm);
 }
+
 .auth-err {
-  margin-bottom: 10px;
+  margin-bottom: var(--oo-space-3);
 }
+
 .auth-submit {
   width: 100%;
+  margin-top: var(--oo-space-1);
+  height: 44px;
+  font-size: var(--oo-text-md);
+  border-radius: var(--oo-radius-lg);
 }
+
 .auth-foot {
-  margin-top: 14px;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
-  line-height: 1.6;
+  margin: var(--oo-space-5) 0 0;
+  padding-top: var(--oo-space-4);
+  border-top: 1px solid var(--oo-border-subtle);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+  line-height: var(--oo-line-relaxed);
+}
+
+@media (max-width: 480px) {
+  .auth-wrap {
+    padding: var(--oo-space-4);
+  }
+  .auth-card {
+    padding: 26px 20px 20px;
+    border-radius: var(--oo-radius-xl);
+  }
+  .auth-title {
+    font-size: var(--oo-text-xl);
+  }
 }
 </style>

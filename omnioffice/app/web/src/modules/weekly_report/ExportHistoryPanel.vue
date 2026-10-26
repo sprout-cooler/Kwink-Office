@@ -6,6 +6,7 @@
 import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { weeklyApi, artifactUrl, type ExportHistoryItem } from "@/api/weekly-report";
+import { OOEmptyState, OOIcon, OOToolbar } from "@/components/ui";
 
 const items = ref<ExportHistoryItem[]>([]);
 const loading = ref(false);
@@ -97,31 +98,48 @@ defineExpose({ refresh });
 
 <template>
   <div v-loading="loading" class="hist">
-    <div class="hist-bar">
-      <el-input
-        v-model="keywordInput"
-        size="default"
-        clearable
-        placeholder="按文件名搜索（如 周报_张三_2026-10-13）"
-        class="hist-search"
-        @keyup.enter="doSearch"
-        @clear="clearSearch"
-      />
-      <el-button size="default" type="primary" @click="doSearch">搜索</el-button>
-      <el-button size="default" @click="refresh">刷新</el-button>
-      <span class="hist-count">共 {{ list.length }} 条</span>
-    </div>
+    <OOToolbar dense>
+      <template #left>
+        <el-input
+          v-model="keywordInput"
+          clearable
+          placeholder="按文件名搜索（如 周报_张三_2026-10-13）"
+          class="hist-search"
+          @keyup.enter="doSearch"
+          @clear="clearSearch"
+        >
+          <template #prefix>
+            <OOIcon name="search" :size="15" />
+          </template>
+        </el-input>
+        <el-button type="primary" @click="doSearch">搜索</el-button>
+        <span class="hist-count">共 <span class="oo-num">{{ list.length }}</span> 条</span>
+      </template>
+      <template #right>
+        <el-button @click="refresh">
+          <span class="oo-btn-icon"><OOIcon name="refresh" :size="15" /></span>
+          刷新
+        </el-button>
+      </template>
+    </OOToolbar>
 
-    <el-empty v-if="!list.length" description="还没有导出记录" :image-size="70" />
-    <el-table v-else :data="list" size="small" border stripe max-height="520">
+    <OOEmptyState
+      v-if="!list.length"
+      variant="inbox"
+      title="还没有导出记录"
+      description="完成一次导出后，这里会保留文件名、导出时间与所用的模板版本"
+    />
+    <el-table v-else :data="list" size="small" stripe max-height="520" class="hist-tbl">
       <el-table-column label="文件名" min-width="210" show-overflow-tooltip>
         <template #default="{ row }">
-          <div class="cell-name">{{ row.name }}</div>
-          <div class="cell-sub">{{ row.periodStart || "—" }} 起那一周</div>
+          <div class="cell-name oo-truncate">{{ row.name }}</div>
+          <div class="cell-sub oo-truncate">{{ row.periodStart || "—" }} 起那一周</div>
         </template>
       </el-table-column>
       <el-table-column label="导出时间" width="150">
-        <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        <template #default="{ row }">
+          <span class="oo-num">{{ fmtTime(row.createdAt) }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="所用模板" width="150">
         <template #default="{ row }">
@@ -129,14 +147,16 @@ defineExpose({ refresh });
             v{{ row.templateVersion }}
           </el-tag>
           <span v-else class="cell-dim">模板已删除</span>
-          <div v-if="row.templateFilename" class="cell-sub" :title="row.templateFilename">
+          <div v-if="row.templateFilename" class="cell-sub oo-truncate" :title="row.templateFilename">
             {{ row.templateFilename }}
           </div>
         </template>
       </el-table-column>
       <el-table-column label="范围" width="110">
         <template #default="{ row }">
-          {{ row.scope === "content" ? "口径一" : "口径二" }} · {{ row.taskCount }} 条
+          <span class="oo-num">
+            {{ row.scope === "content" ? "口径一" : "口径二" }} · {{ row.taskCount }} 条
+          </span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="90">
@@ -146,9 +166,9 @@ defineExpose({ refresh });
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="大小" width="90">
+      <el-table-column label="大小" width="100">
         <template #default="{ row }">
-          <span v-if="row.xlsxExists">{{ fmtSize(row.xlsxSize) }}</span>
+          <span v-if="row.xlsxExists" class="oo-num">{{ fmtSize(row.xlsxSize) }}</span>
           <span v-else class="cell-dim">文件已清理</span>
         </template>
       </el-table-column>
@@ -166,53 +186,68 @@ defineExpose({ refresh });
       </el-table-column>
     </el-table>
 
-    <div class="hist-foot">
+    <p class="hist-foot">
       文件同时落在 NAS 共享目录「omnioffice/exports」，重命名与删除会同步到该目录。
-    </div>
+    </p>
   </div>
 </template>
 
 <style scoped>
-.hist-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
 .hist-search {
   width: 320px;
+  max-width: 100%;
 }
+
+.oo-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: var(--oo-space-1);
+}
+
 .hist-count {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  margin-left: auto;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
 }
+
+.hist-tbl {
+  width: 100%;
+}
+
 .cell-name {
-  font-weight: 600;
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
 }
+
 .cell-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
   max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
+
 .cell-dim {
-  color: var(--el-text-color-placeholder);
-  font-size: 12px;
+  color: var(--oo-text-placeholder);
+  font-size: var(--oo-text-xs);
 }
+
 .link {
-  color: var(--el-color-primary);
+  color: var(--oo-text-brand);
   text-decoration: none;
 }
+
 .link:hover {
   text-decoration: underline;
 }
+
 .hist-foot {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
+  margin: var(--oo-space-3) 0 0;
+  padding: var(--oo-space-3) var(--oo-space-5) var(--oo-space-4);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+}
+
+@media (max-width: 768px) {
+  .hist-search {
+    width: 100%;
+  }
 }
 </style>

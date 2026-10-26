@@ -11,6 +11,7 @@
 //   交给服务端 dateparse 判定，界面已有 cell-err 标红与「越界」标记兜底。
 import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { OOIcon } from "@/components/ui";
 
 const props = withDefaults(
   defineProps<{
@@ -174,10 +175,7 @@ function clearField() {
         >
           <template #suffix>
             <span class="tf-cal" :class="{ 'is-open': panelOpen }" title="日历选择">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3.5" y="5" width="17" height="15" rx="2" />
-                <path d="M8 3v4M16 3v4M3.5 10h17" />
-              </svg>
+              <OOIcon name="calendar" :size="14" />
             </span>
           </template>
         </el-input>
@@ -185,11 +183,23 @@ function clearField() {
     </template>
 
     <div class="tf-panel" @click.stop @mousedown.stop @pointerdown.stop>
-      <div class="tf-modes">
-        <button type="button" :class="{ on: mode === 'calendar' }" @click="mode = 'calendar'">
+      <div class="tf-modes" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'calendar'"
+          :class="{ on: mode === 'calendar' }"
+          @click="mode = 'calendar'"
+        >
           日历选择
         </button>
-        <button type="button" :class="{ on: mode === 'manual' }" @click="mode = 'manual'">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'manual'"
+          :class="{ on: mode === 'manual' }"
+          @click="mode = 'manual'"
+        >
           手动输入
         </button>
       </div>
@@ -233,68 +243,94 @@ function clearField() {
 .tf-ref {
   width: 100%;
 }
+
 .tf-cal {
   display: inline-flex;
   align-items: center;
-  color: var(--el-text-color-placeholder);
+  color: var(--oo-text-placeholder);
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color var(--oo-dur-base) var(--oo-ease-out);
 }
+
 .tf-cal:hover,
 .tf-cal.is-open {
-  color: var(--el-color-primary);
+  color: var(--oo-text-brand);
 }
+
 .tf-panel {
   width: 296px;
-  padding: 2px;
+  max-width: calc(100vw - 48px);
+  padding: var(--oo-space-1);
 }
+
+/* —— 模式切换 —— */
 .tf-modes {
   display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: var(--oo-space-1);
+  margin-bottom: var(--oo-space-2);
+  padding: 3px;
+  border-radius: var(--oo-radius-sm);
+  background: var(--oo-bg-surface-2);
 }
+
 .tf-modes button {
   flex: 1;
-  padding: 5px 0;
-  font-size: 12px;
-  color: var(--el-text-color-regular);
-  background: var(--el-fill-color-light);
+  padding: var(--oo-space-1) 0;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-secondary);
+  background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--oo-radius-xs);
   cursor: pointer;
+  transition:
+    background var(--oo-dur-base) var(--oo-ease-out),
+    color var(--oo-dur-base) var(--oo-ease-out);
 }
+
+.tf-modes button:hover:not(.on) {
+  background: var(--oo-bg-hover);
+  color: var(--oo-text-primary);
+}
+
 .tf-modes button.on {
-  color: #fff;
-  background: var(--el-color-primary);
+  color: var(--oo-brand-on);
+  background: var(--oo-gradient-brand);
+  box-shadow: var(--oo-shadow-brand);
 }
+
 .tf-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--oo-space-2);
   align-items: flex-start;
 }
+
 .tf-body :deep(.el-date-editor) {
   width: 100%;
 }
+
 .tf-clear {
   align-self: flex-start;
   padding: 0;
   height: auto;
 }
+
 .tf-acts {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--oo-space-2);
   width: 100%;
 }
+
 .tf-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
+  margin: var(--oo-space-2) 0 0;
+  font-size: var(--oo-text-xs);
+  line-height: var(--oo-line-relaxed);
+  color: var(--oo-text-tertiary);
 }
+
 /* 解析失败标红：与原行内输入框的 cell-err 视觉保持一致 */
 .cell-err :deep(.el-input__wrapper) {
-  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+  box-shadow: 0 0 0 1px var(--oo-danger) inset;
 }
 </style>

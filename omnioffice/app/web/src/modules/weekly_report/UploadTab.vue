@@ -12,6 +12,7 @@ import {
   type RecognizeStatus,
   type ScreenshotItem,
 } from "@/api/weekly-report";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOStatTile } from "@/components/ui";
 
 interface PartitionDef {
   id: PartitionId;
@@ -45,6 +46,9 @@ const busyCount = computed(() => (recognize.value?.counts.pending ?? 0) + (recog
 
 const totalCount = computed(() => stats.value.reduce((n, p) => n + p.total, 0));
 const missingCount = computed(() => items.value.filter((i) => i.fileMissing).length);
+
+/** 已识别张数（顶部指标块展示用） */
+const doneCount = computed(() => recognize.value?.counts.done ?? 0);
 
 function itemsOf(pid: PartitionId): ScreenshotItem[] {
   return items.value.filter((i) => i.partition === pid);
@@ -240,10 +244,26 @@ defineExpose({ refresh });
 
 <template>
   <div v-loading="loading" class="upload-tab">
-    <div class="upload-header">
-      <span class="period">本周周期：{{ periodStart }} 起</span>
-      <el-tag type="info" effect="plain">共 {{ totalCount }} 张</el-tag>
-      <span class="tip">先选分区再上传；误传可直接拖到另一分区或用右下角下拉调整</span>
+    <OOPageHeader
+      title="任务上传"
+      description="按分区上传本周工作截图并触发大模型识别，识别结果将在「识别校对」逐条核对"
+      badge="🖼️"
+    >
+      <el-button :loading="loading" @click="refresh">
+        <span class="oo-btn-icon"><OOIcon name="refresh" :size="16" /></span>
+        刷新
+      </el-button>
+    </OOPageHeader>
+
+    <!-- 周期信息 -->
+    <div class="upload-meta">
+      <span class="upload-meta-item">
+        <OOIcon name="calendar" :size="15" />
+        本周周期：<b class="oo-num">{{ periodStart || "—" }}</b> 起
+      </span>
+      <span class="upload-meta-tip">
+        先选分区再上传；误传可直接拖到另一分区，或用缩略图下方的下拉调整归属
+      </span>
     </div>
 
     <!-- 失效原图警告（历史升级遗留）：一键清理后重传 -->
@@ -252,24 +272,58 @@ defineExpose({ refresh });
       type="error"
       show-icon
       :closable="false"
-      class="missing-bar"
+      class="oo-mb-4"
     >
       <template #title>
         {{ missingCount }} 张截图的原图已丢失（旧版本升级时文件目录被清理，无法恢复）
-        <el-button type="danger" size="small" plain style="margin-left: 12px" @click="purgeMissing">
+        <el-button type="danger" size="small" plain class="alert-btn" @click="purgeMissing">
           清除失效记录
         </el-button>
       </template>
     </el-alert>
 
     <!-- 识别操作栏：配置状态 + 触发 + 进度摘要 -->
-    <div class="recognize-bar">
-      <template v-if="recognize && !recognize.configured">
-        <el-alert type="warning" :closable="false" show-icon class="rec-alert">
-          尚未配置大模型 API Key——上传后可先存储，识别需要在「应用配置」中填写你的 Key（通义千问 / 豆包均可）。
-        </el-alert>
-      </template>
-      <template v-else>
+    <div class="upload-kpis oo-mb-4">
+      <OOStatTile
+        label="截图总数"
+        icon="🖼️"
+        tone="brand"
+        :value="totalCount"
+        hint="本周已上传"
+      />
+      <OOStatTile
+        label="待识别"
+        icon="⏳"
+        tone="amber"
+        :value="pendingCount"
+        hint="等待识别"
+      />
+      <OOStatTile
+        label="已识别"
+        icon="✅"
+        tone="green"
+        :value="doneCount"
+        hint="可进入校对"
+      />
+      <OOStatTile
+        label="失效原图"
+        icon="⚠️"
+        tone="red"
+        :value="missingCount"
+        :hint="missingCount > 0 ? '需清理后重传' : '无失效记录'"
+      />
+    </div>
+
+    <OOCard title="识别状态" subtitle="上传完成后可批量触发识别，识别进度实时回填" class="oo-mb-4">
+      <el-alert
+        v-if="recognize && !recognize.configured"
+        type="warning"
+        :closable="false"
+        show-icon
+      >
+        尚未配置大模型 API Key——上传后可先存储，识别需要在「应用配置」中填写你的 Key（通义千问 / 豆包均可）。
+      </el-alert>
+      <div v-else class="recognize-bar">
         <el-button
           type="primary"
           :loading="recognizing"
@@ -281,221 +335,337 @@ defineExpose({ refresh });
         <el-button v-if="failedCount > 0" :loading="recognizing" type="warning" @click="retryFailed">
           重试失败（{{ failedCount }}）
         </el-button>
-        <span v-if="busyCount > 0" class="rec-progress">
-          <el-tag type="warning" effect="light">{{ busyCount }} 张识别中</el-tag>
-        </span>
-        <span v-else-if="recognize" class="rec-done">
-          <el-tag type="success" effect="plain">已识别 {{ recognize.counts.done }} 张</el-tag>
-        </span>
-      </template>
-    </div>
+        <el-tag v-if="busyCount > 0" type="warning" effect="light">{{ busyCount }} 张识别中</el-tag>
+        <el-tag v-else-if="recognize" type="success" effect="plain">
+          已识别 {{ recognize.counts.done }} 张
+        </el-tag>
+      </div>
+    </OOCard>
 
+    <!-- 三个分区的上传区 -->
     <div class="partition-grid">
-      <section
+      <div
         v-for="p in PARTITIONS"
         :key="p.id"
-        class="partition-card"
-        :class="{ dragover: dragOverPartition === p.id }"
+        class="partition"
+        :class="{ 'is-dragover': dragOverPartition === p.id }"
         @dragover.prevent="dragOverPartition = p.id"
         @dragleave="dragOverPartition = ''"
         @drop.prevent="onDrop($event, p.id)"
       >
-        <header class="partition-head">
-          <h3>{{ p.label }}</h3>
-          <el-tag size="small">{{ statOf(p.id)?.total ?? 0 }} 张</el-tag>
-        </header>
-        <p class="partition-hint">{{ p.hint }}</p>
+        <OOCard :title="p.label" :subtitle="p.hint" class="partition-card">
+          <template #actions>
+            <el-tag size="small" type="info" effect="plain">
+              <span class="oo-num">{{ statOf(p.id)?.total ?? 0 }}</span> 张
+            </el-tag>
+          </template>
 
-        <div class="dropzone" @click="pickFiles(p.id)">
-          <div class="dz-icon">＋</div>
-          <p>点击选择，或把图片拖到这里</p>
-          <p class="dz-sub">jpg / png / webp，单张 ≤ 10MB</p>
-        </div>
+          <div class="dropzone" @click="pickFiles(p.id)">
+            <span class="dz-icon"><OOIcon name="upload" :size="22" /></span>
+            <p class="dz-title">点击选择，或把图片拖到这里</p>
+            <p class="dz-sub">jpg / png / webp，单张 ≤ 10MB</p>
+          </div>
 
-        <el-progress
-          v-if="uploading[p.id]"
-          :percentage="progress[p.id] ?? 0"
-          :stroke-width="6"
-          class="dz-progress"
-        />
+          <el-progress
+            v-if="uploading[p.id]"
+            :percentage="progress[p.id] ?? 0"
+            :stroke-width="6"
+            class="dz-progress"
+          />
 
-        <ul class="shot-list">
-          <li v-for="s in itemsOf(p.id)" :key="s.id" class="shot-item" :class="{ 'is-missing': s.fileMissing }" draggable="true" @dragstart="dragId = s.id">
-            <img v-if="!s.fileMissing" :src="screenshotRawUrl(s.id)" :alt="s.filename" class="shot-thumb" />
-            <div v-else class="shot-thumb shot-thumb-missing" title="原图文件已丢失（历史升级遗留），请删除后重新上传">
-              <span>原图已丢失</span>
-            </div>
-            <div class="shot-meta">
-              <div class="shot-name" :title="s.filename">{{ s.filename }}</div>
-              <div class="shot-sub">
-                {{ fmtSize(s.size) }}
-                <el-tag
-                  size="small"
-                  :type="statusTag[s.recognizeStatus]"
-                  :title="s.recognizeStatus === 'failed' ? s.recognizeError : undefined"
-                >
-                  {{ statusLabel[s.recognizeStatus] }}{{ s.taskCount > 0 ? `（${s.taskCount} 条）` : "" }}
-                </el-tag>
-              </div>
-              <el-select
-                :model-value="s.partition"
-                size="small"
-                class="shot-move"
-                @change="(v: PartitionId) => moveTo(s.id, v)"
+          <ul v-if="itemsOf(p.id).length" class="shot-list">
+            <li
+              v-for="s in itemsOf(p.id)"
+              :key="s.id"
+              class="shot-item"
+              :class="{ 'is-missing': s.fileMissing }"
+              draggable="true"
+              @dragstart="dragId = s.id"
+            >
+              <img
+                v-if="!s.fileMissing"
+                :src="screenshotRawUrl(s.id)"
+                :alt="s.filename"
+                class="shot-thumb"
+              />
+              <div
+                v-else
+                class="shot-thumb shot-thumb-missing"
+                title="原图文件已丢失（历史升级遗留），请删除后重新上传"
               >
-                <el-option v-for="pp in PARTITIONS" :key="pp.id" :label="pp.label" :value="pp.id" />
-              </el-select>
-            </div>
-            <el-button link type="danger" size="small" @click="remove(s)">删除</el-button>
-          </li>
-          <li v-if="itemsOf(p.id).length === 0" class="empty-line">暂无截图</li>
-        </ul>
-      </section>
+                <OOIcon name="trash" :size="16" />
+              </div>
+              <div class="shot-meta">
+                <div class="shot-name oo-truncate" :title="s.filename">{{ s.filename }}</div>
+                <div class="shot-sub">
+                  <span class="oo-num">{{ fmtSize(s.size) }}</span>
+                  <el-tag
+                    size="small"
+                    :type="statusTag[s.recognizeStatus]"
+                    :title="s.recognizeStatus === 'failed' ? s.recognizeError : undefined"
+                  >
+                    {{ statusLabel[s.recognizeStatus] }}{{ s.taskCount > 0 ? `（${s.taskCount} 条）` : "" }}
+                  </el-tag>
+                </div>
+                <el-select
+                  :model-value="s.partition"
+                  size="small"
+                  class="shot-move"
+                  @change="(v: PartitionId) => moveTo(s.id, v)"
+                >
+                  <el-option v-for="pp in PARTITIONS" :key="pp.id" :label="pp.label" :value="pp.id" />
+                </el-select>
+              </div>
+              <el-button link type="danger" size="small" @click="remove(s)">删除</el-button>
+            </li>
+          </ul>
+
+          <OOEmptyState
+            v-else
+            class="part-empty"
+            variant="inbox"
+            title="暂无截图"
+            description="把本周的截图拖进上方虚线框，或点击虚线框从电脑中选择文件"
+          />
+        </OOCard>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.upload-header {
+.upload-tab {
+  padding-bottom: var(--oo-space-6);
+}
+
+.oo-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: var(--oo-space-1);
+}
+
+/* —— 周期信息行 —— */
+.upload-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: var(--oo-space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--oo-space-4);
+  font-size: var(--oo-text-sm);
+  color: var(--oo-text-secondary);
 }
+
+.upload-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--oo-space-2);
+}
+
+.upload-meta-item b {
+  color: var(--oo-text-primary);
+  font-weight: var(--oo-weight-semibold);
+}
+
+.upload-meta-tip {
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+}
+
+.alert-btn {
+  margin-left: var(--oo-space-3);
+}
+
+/* —— 识别操作栏 —— */
+.upload-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  gap: var(--oo-space-3);
+}
+
 .recognize-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: var(--oo-space-2);
   flex-wrap: wrap;
 }
-.rec-alert {
-  flex: 1;
-  min-width: 300px;
-}
-.period {
-  font-weight: 600;
-}
-.tip {
-  color: #909399;
-  font-size: 12px;
-}
+
+/* —— 分区栅格 —— */
 .partition-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(3, minmax(min(280px, 100%), 1fr));
+  gap: var(--oo-space-4);
+  align-items: start;
 }
+
+.partition {
+  display: flex;
+  min-width: 0;
+  border-radius: var(--oo-radius-lg);
+  transition: box-shadow var(--oo-dur-base) var(--oo-ease-out);
+}
+
+.partition.is-dragover {
+  box-shadow: var(--oo-focus-ring);
+}
+
 .partition-card {
-  border: 1px solid var(--oo-border);
-  border-radius: 8px;
-  padding: 14px;
-  background: #fff;
-  display: flex;
-  flex-direction: column;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  flex: 1;
+  min-width: 0;
 }
-.partition-card.dragover {
-  border-color: var(--oo-accent);
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
-}
-.partition-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.partition-head h3 {
-  margin: 0;
-  font-size: 15px;
-}
-.partition-hint {
-  margin: 6px 0 10px;
-  color: #909399;
-  font-size: 12px;
-  min-height: 32px;
-}
+
+/* —— 拖拽上传区 —— */
 .dropzone {
-  border: 1px dashed #c0c4cc;
-  border-radius: 8px;
-  padding: 22px 12px;
+  border: 1px dashed var(--oo-border-strong);
+  border-radius: var(--oo-radius-md);
+  padding: var(--oo-space-6) var(--oo-space-3);
   text-align: center;
-  color: #909399;
+  color: var(--oo-text-tertiary);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  background: var(--oo-bg-surface-2);
+  transition:
+    border-color var(--oo-dur-base) var(--oo-ease-out),
+    background var(--oo-dur-base) var(--oo-ease-out),
+    color var(--oo-dur-base) var(--oo-ease-out);
 }
+
 .dropzone:hover {
-  border-color: var(--oo-accent);
-  background: #f5f9ff;
+  border-color: var(--oo-border-brand);
+  background: var(--oo-brand-soft);
+  color: var(--oo-text-secondary);
 }
+
 .dz-icon {
-  font-size: 28px;
-  line-height: 1;
-  color: #c0c4cc;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--oo-radius-md);
+  background: var(--oo-bg-surface);
+  border: 1px solid var(--oo-border-subtle);
+  color: var(--oo-text-brand);
 }
-.dropzone p {
-  margin: 6px 0 0;
-  font-size: 13px;
+
+.dz-title {
+  margin-top: var(--oo-space-2);
+  font-size: var(--oo-text-sm);
+  color: var(--oo-text-secondary);
 }
+
 .dz-sub {
-  font-size: 11px !important;
+  margin-top: var(--oo-space-1);
+  font-size: var(--oo-text-2xs);
+  color: var(--oo-text-tertiary);
 }
+
 .dz-progress {
-  margin-top: 8px;
+  margin-top: var(--oo-space-3);
 }
+
+/* —— 缩略图列表 —— */
 .shot-list {
   list-style: none;
-  margin: 12px 0 0;
+  margin: var(--oo-space-3) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-height: 40px;
+  gap: var(--oo-space-2);
 }
+
 .shot-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 6px 8px;
+  gap: var(--oo-space-3);
+  border: 1px solid var(--oo-border-subtle);
+  border-radius: var(--oo-radius-sm);
+  padding: var(--oo-space-2);
+  background: var(--oo-bg-surface-2);
   cursor: grab;
+  transition:
+    border-color var(--oo-dur-base) var(--oo-ease-out),
+    background var(--oo-dur-base) var(--oo-ease-out);
 }
+
+.shot-item:hover {
+  border-color: var(--oo-border-default);
+  background: var(--oo-bg-surface);
+}
+
 .shot-item:active {
   cursor: grabbing;
 }
+
+.shot-item.is-missing {
+  border-color: var(--oo-danger-soft);
+  background: var(--oo-danger-soft);
+}
+
 .shot-thumb {
   width: 48px;
   height: 48px;
   object-fit: cover;
-  border-radius: 4px;
-  background: #f5f7fa;
+  border-radius: var(--oo-radius-xs);
+  background: var(--oo-bg-surface-3);
   flex-shrink: 0;
 }
+
+.shot-thumb-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--oo-danger-text);
+}
+
 .shot-meta {
   flex: 1;
   min-width: 0;
 }
+
 .shot-name {
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: var(--oo-text-sm);
+  color: var(--oo-text-primary);
+  font-weight: var(--oo-weight-medium);
 }
+
 .shot-sub {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #909399;
-  font-size: 12px;
-  margin-top: 2px;
+  gap: var(--oo-space-2);
+  flex-wrap: wrap;
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-xs);
+  margin-top: var(--oo-space-1);
 }
+
 .shot-move {
   width: 100%;
-  margin-top: 4px;
+  margin-top: var(--oo-space-2);
 }
-.empty-line {
-  color: #c0c4cc;
-  font-size: 12px;
-  text-align: center;
-  padding: 10px 0;
+
+/* 分区内的空态收紧：三分区并列时不必占用过多高度 */
+.part-empty :deep(.oo-empty) {
+  padding: var(--oo-space-4) var(--oo-space-2);
+  gap: var(--oo-space-1);
+}
+
+.part-empty :deep(.oo-empty-art) {
+  margin-bottom: 0;
+}
+
+.part-empty :deep(.oo-empty-art svg) {
+  width: 40px;
+  height: 40px;
+}
+
+@media (max-width: 1100px) {
+  .partition-grid {
+    grid-template-columns: repeat(2, minmax(min(280px, 100%), 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .partition-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

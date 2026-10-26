@@ -157,6 +157,47 @@ button {
 .oo-gap-4 { gap: var(--oo-space-4); }
 
 /* ------------------------------------------------------------
+ * 表单字段宽度
+ * ------------------------------------------------------------
+ * 之前这些宽度是写死在模板里的内联 style（如 style="width: 160px"），
+ * 窄屏下元素比容器还宽 → 横向溢出。
+ * 改成语义类：桌面按 sm/md/lg 给固定宽度，窄屏一律撑满。
+ */
+.oo-field-w {
+  width: 100%;
+  max-width: 100%;
+}
+
+.oo-field-w-sm {
+  width: 120px;
+  max-width: 100%;
+}
+
+.oo-field-w-md {
+  width: 160px;
+  max-width: 100%;
+}
+
+.oo-field-w-lg {
+  width: 180px;
+  max-width: 100%;
+}
+
+.oo-field-w-xl {
+  width: 320px;
+  max-width: 100%;
+}
+
+@media (max-width: 560px) {
+  .oo-field-w-sm,
+  .oo-field-w-md,
+  .oo-field-w-lg,
+  .oo-field-w-xl {
+    width: 100%;
+  }
+}
+
+/* ------------------------------------------------------------
  * 入场动效 —— 面板切换时的轻微淡入上浮
  * ------------------------------------------------------------ */
 @keyframes oo-fade-up {
@@ -203,6 +244,24 @@ button {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* 旋转加载指示器 */
+.oo-spin {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--oo-border-default);
+  border-top-color: var(--oo-brand);
+  border-radius: 50%;
+  animation: oo-spin 0.8s linear infinite;
+  flex: none;
+}
+
+.oo-spin-sm {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }
 
 .oo-animate-in {

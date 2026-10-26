@@ -130,6 +130,9 @@
   --oo-brand: #4c6fff;
   --oo-brand-hover: #3559e6;
   --oo-brand-active: #2b47c4;
+  /* 承载白字的品牌填充（选中态、主按钮底）：
+   * 实测 #4C6FFF 上白字只有 4.18:1，#3559E6 → 5.64:1。 */
+  --oo-brand-fill: #3559e6;
   --oo-brand-soft: #eef2ff; /* 浅色填充（选中态底） */
   --oo-brand-soft-hover: #dfe6ff;
   --oo-brand-on: #ffffff; /* 品牌底上的文字 5.64:1 */
@@ -146,7 +149,9 @@
   --oo-danger-text: #a32d25;
   --oo-info: #14b8a6;
   --oo-info-soft: #d3f5ef;
-  --oo-info-text: #0b7c72;
+  /* info 文字色实测：#0B7C72 压在 info-soft(#D3F5EF) 上只有 4.37:1，
+   * 压深到 #0A6F66 → 5.20:1。 */
+  --oo-info-text: #0a6f66;
 
   /* —— 圆角 —— */
   --oo-radius-xs: 6px;
@@ -209,16 +214,19 @@
   --oo-shadow-inset: inset 0 1px 2px rgba(21, 26, 38, 0.05);
 
   /* —— 渐变 —— */
-  --oo-gradient-brand: linear-gradient(135deg, #4c6fff 0%, #7c5cf0 100%);
+  /* 品牌渐变承载白字，两端都要 ≥4.5:1：
+   * 旧值 #4C6FFF→#7C5CF0 白字只有 4.18 / 4.52（起点不达标）；
+   * 新值 #3559E6→#6B48E8 → 5.64 / 5.65，两端都达标。 */
+  --oo-gradient-brand: linear-gradient(135deg, #3559e6 0%, #6b48e8 100%);
   --oo-gradient-brand-soft: linear-gradient(
     135deg,
-    rgba(76, 111, 255, 0.12) 0%,
-    rgba(124, 92, 240, 0.12) 100%
+    rgba(53, 89, 230, 0.12) 0%,
+    rgba(107, 72, 232, 0.12) 100%
   );
   --oo-gradient-brand-soft-hover: linear-gradient(
     135deg,
-    rgba(76, 111, 255, 0.18) 0%,
-    rgba(124, 92, 240, 0.18) 100%
+    rgba(53, 89, 230, 0.18) 0%,
+    rgba(107, 72, 232, 0.18) 100%
   );
   --oo-gradient-surface: linear-gradient(
     180deg,
@@ -274,8 +282,10 @@ html.dark {
   /* —— 文字层 —— */
   --oo-text-primary: #e8ebf2;
   --oo-text-secondary: #9ba3b4;
-  --oo-text-tertiary: #7a8394;
-  --oo-text-placeholder: #828c9e;
+  /* 三级文字实测：在最浅的 surface-2(#1f232d) 上需 ≥4.5:1，
+     #7a8394 只有 4.12:1，故提亮到 #828c9e（4.63:1） */
+  --oo-text-tertiary: #828c9e;
+  --oo-text-placeholder: #8b95a6;
   --oo-text-inverse: #151a26;
   --oo-text-brand: #8aa0ff;
   --oo-text-brand-hover: #a8b8ff;
@@ -290,6 +300,9 @@ html.dark {
   --oo-brand: #4c6fff;
   --oo-brand-hover: #5f7dff;
   --oo-brand-active: #7a90ff;
+  /* 深色下承载白字的品牌填充：#5F7DFF 上白字只有 3.58:1，
+   * 改用 #4260E8 → 白字 5.16:1（渐变另一端 #7A5CE0 → 4.74:1）。 */
+  --oo-brand-fill: #4260e8;
   --oo-brand-soft: rgba(76, 111, 255, 0.16);
   --oo-brand-soft-hover: rgba(76, 111, 255, 0.26);
   --oo-brand-on: #ffffff;
@@ -318,16 +331,19 @@ html.dark {
   --oo-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.3);
 
   /* —— 渐变 —— */
-  --oo-gradient-brand: linear-gradient(135deg, #5f7dff 0%, #8f6cf5 100%);
+  /* 深色下品牌渐变同样承载白字：
+   * 旧值 #5F7DFF→#8F6CF5 白字只有 3.58 / 3.73（均不达标）；
+   * 新值 #4260E8→#7A5CE0 → 5.16 / 4.74，两端都达标。 */
+  --oo-gradient-brand: linear-gradient(135deg, #4260e8 0%, #7a5ce0 100%);
   --oo-gradient-brand-soft: linear-gradient(
     135deg,
-    rgba(95, 125, 255, 0.16) 0%,
-    rgba(143, 108, 245, 0.16) 100%
+    rgba(66, 96, 232, 0.16) 0%,
+    rgba(122, 92, 224, 0.16) 100%
   );
   --oo-gradient-brand-soft-hover: linear-gradient(
     135deg,
-    rgba(95, 125, 255, 0.24) 0%,
-    rgba(143, 108, 245, 0.24) 100%
+    rgba(66, 96, 232, 0.24) 0%,
+    rgba(122, 92, 224, 0.24) 100%
   );
   --oo-gradient-surface: linear-gradient(
     180deg,

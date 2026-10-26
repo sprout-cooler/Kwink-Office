@@ -4,6 +4,7 @@
 import { onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { weeklyApi, type ManualData } from "@/api/weekly-report";
+import { OOCard, OOPageHeader } from "@/components/ui";
 
 const loading = ref(false);
 const saving = ref(false);
@@ -40,42 +41,50 @@ async function save() {
 </script>
 
 <template>
-  <div v-loading="loading" class="manual-tab">
+  <div class="manual-tab">
+    <OOPageHeader
+      title="手工补充"
+      description="填写重点问题与工作需求，这两段会原样写入周报模板的对应行"
+      badge="✍️"
+    >
+      <el-button type="primary" :loading="saving" @click="save">
+        保存补充内容
+      </el-button>
+    </OOPageHeader>
+
     <el-alert type="info" :closable="false" class="tip-alert">
       这两段内容会原样写入周报模板的对应行，不参与 AI 识别与统计校对。每条建议一行，写完点保存。
     </el-alert>
 
-    <el-card shadow="never" class="blk">
-      <template #header>
-        <div class="blk-head">
-          <b>重点问题跟进</b>
-          <span class="blk-sub">模板第 19-20 行</span>
-        </div>
-      </template>
+    <OOCard
+      title="重点问题跟进"
+      subtitle="模板第 19-20 行"
+      class="blk"
+      :loading="loading"
+    >
       <el-input
         v-model="form.issues"
         type="textarea"
         :rows="7"
         placeholder="如：&#10;1. 客户对 XX 功能反馈较多，计划下周集中优化&#10;2. 跨部门接口联调进度滞后，需协调资源"
       />
-      <div class="counter">{{ form.issues.length }} / 4000</div>
-    </el-card>
+      <div class="counter oo-num">{{ form.issues.length }} / 4000</div>
+    </OOCard>
 
-    <el-card shadow="never" class="blk">
-      <template #header>
-        <div class="blk-head">
-          <b>工作需求</b>
-          <span class="blk-sub">模板第 21-22 行</span>
-        </div>
-      </template>
+    <OOCard
+      title="工作需求"
+      subtitle="模板第 21-22 行"
+      class="blk"
+      :loading="loading"
+    >
       <el-input
         v-model="form.demands"
         type="textarea"
         :rows="7"
         placeholder="如：&#10;1. 需要 XX 部门提供测试环境&#10;2. 申请下周外出培训名额"
       />
-      <div class="counter">{{ form.demands.length }} / 4000</div>
-    </el-card>
+      <div class="counter oo-num">{{ form.demands.length }} / 4000</div>
+    </OOCard>
 
     <div class="actions">
       <el-button type="primary" :loading="saving" @click="save">保存补充内容</el-button>
@@ -85,32 +94,28 @@ async function save() {
 
 <style scoped>
 .manual-tab {
-  padding-bottom: 24px;
+  padding-bottom: var(--oo-space-6);
   max-width: 860px;
 }
+
 .tip-alert {
-  margin-bottom: 16px;
+  margin-bottom: var(--oo-space-4);
 }
+
 .blk {
-  margin-bottom: 16px;
+  margin-bottom: var(--oo-space-4);
 }
-.blk-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-.blk-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  font-weight: normal;
-}
+
 .counter {
   text-align: right;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-top: 6px;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+  margin-top: var(--oo-space-2);
 }
+
 .actions {
-  padding-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--oo-space-1);
 }
 </style>

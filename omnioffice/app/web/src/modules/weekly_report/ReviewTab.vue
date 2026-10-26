@@ -20,6 +20,7 @@ import {
 } from "@/api/weekly-report";
 import TaskTimeField from "./TaskTimeField.vue";
 import { bizApi, type BizCustomer } from "@/api/biz-dashboard";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOSectionTitle, OOStatTile, OOToolbar } from "@/components/ui";
 
 const loading = ref(false);
 const saving = ref<number | null>(null);
@@ -270,22 +271,40 @@ async function confirmAllVisible() {
 
 <template>
   <div v-loading="loading" class="review-tab">
-    <div class="review-bar">
-      <span class="period">共 {{ totalCount }} 条任务</span>
-      <el-tag v-if="issueCount > 0" type="warning" effect="light">
-        {{ issueCount }} 条待人工确认
-      </el-tag>
-      <el-tag v-else-if="totalCount > 0" type="success" effect="light">全部已确认</el-tag>
-
-      <el-select v-model="filterPartition" placeholder="全部分区" clearable size="small" class="w-160">
-        <el-option v-for="p in PARTITIONS" :key="p.id" :label="p.label" :value="p.id" />
-      </el-select>
-      <el-checkbox v-model="filterIssue" label="只看待确认" />
-      <span class="spacer" />
-      <el-button v-if="issueCount > 0" size="small" @click="confirmAllVisible">
-        批量确认（当前视图）
+    <OOPageHeader
+      title="识别校对"
+      description="逐条核对识别结果，修正时间、归属星期与统计分类，确认后方可导出"
+      badge="✅"
+    >
+      <el-button :loading="loading" @click="refresh">
+        <span class="oo-btn-icon"><OOIcon name="refresh" :size="16" /></span>
+        刷新
       </el-button>
-      <el-button size="small" type="primary" plain @click="creating = true">手工新增</el-button>
+    </OOPageHeader>
+
+    <!-- 概览指标 -->
+    <div class="review-kpis oo-mb-4">
+      <OOStatTile
+        label="任务总数"
+        icon="🗂️"
+        tone="brand"
+        :value="totalCount"
+        hint="本周识别出的全部任务"
+      />
+      <OOStatTile
+        label="待人工确认"
+        icon="⚠️"
+        tone="amber"
+        :value="issueCount"
+        :hint="issueCount > 0 ? '低置信度或时间解析失败' : '全部已确认'"
+      />
+      <OOStatTile
+        label="当前视图"
+        icon="👁️"
+        tone="teal"
+        :value="visible.length"
+        hint="按筛选条件显示"
+      />
     </div>
 
     <!-- 原图对照抽屉：低置信度时对照抄录 -->
@@ -299,7 +318,12 @@ async function confirmAllVisible() {
       <div v-if="compareTask" class="cmp">
         <div class="cmp-img">
           <img v-if="compareTask.screenshotId" :src="screenshotRawUrl(compareTask.screenshotId)" alt="原图" />
-          <el-empty v-else description="手工新增任务，无原图" :image-size="80" />
+          <OOEmptyState
+            v-else
+            variant="inbox"
+            title="无原图对照"
+            description="手工新增的任务没有原图，可直接按标题与时间填写"
+          />
         </div>
         <div class="cmp-info">
           <h4>{{ compareTask.title }}</h4>
@@ -317,7 +341,7 @@ async function confirmAllVisible() {
               {{ toEditable(compareTask.endAt) || "—" }}
             </el-descriptions-item>
             <el-descriptions-item label="置信度">
-              {{ (compareTask.confidence * 100).toFixed(0) }}%
+              <span class="oo-num">{{ (compareTask.confidence * 100).toFixed(0) }}%</span>
             </el-descriptions-item>
             <el-descriptions-item label="原始状态">
               {{ compareTask.rawStatus || "—" }}
@@ -336,7 +360,21 @@ async function confirmAllVisible() {
     </el-drawer>
 
     <!-- 手工新增 -->
-    <el-dialog v-model="creating" title="手工新增任务" width="480px">
+    <el-dialog
+      v-model="creating"
+      width="min(480px, 92vw)"
+      align-center
+    >
+      <template #header>
+        <div class="dlg-head">
+          <span class="dlg-icon"><OOIcon name="plus" :size="18" /></span>
+          <div class="dlg-head-text">
+            <h3 class="dlg-title">手工新增任务</h3>
+            <p class="dlg-sub">补录识别遗漏的工作条目，时间可留空</p>
+          </div>
+        </div>
+      </template>
+
       <el-form label-width="80px" label-position="left">
         <el-form-item label="标题">
           <el-input v-model="draft.title" placeholder="如：协助处理线上工单" />
@@ -378,275 +416,388 @@ async function confirmAllVisible() {
       </template>
     </el-dialog>
 
-    <el-empty v-if="!loading && totalCount === 0" description="还没有识别结果 —— 请先到「任务上传」上传截图并识别" />
-    <el-empty v-else-if="!loading && visible.length === 0" description="当前筛选条件下没有任务" />
+    <template v-if="!loading && totalCount === 0">
+      <OOEmptyState
+        variant="inbox"
+        title="还没有识别结果"
+        description="请先到「任务上传」上传截图并触发识别，识别完成后在这里逐条校对"
+      />
+    </template>
 
-    <section v-for="g in grouped" :key="g.id" class="group">
-      <header class="group-head">
-        <h3>{{ g.label }}</h3>
-        <el-tag size="small" effect="plain">{{ g.tasks.length }} 条</el-tag>
-      </header>
+    <template v-else-if="!loading && visible.length === 0">
+      <OOEmptyState
+        variant="search"
+        title="当前筛选条件下没有任务"
+        description="换一个分区，或取消「只看待确认」筛选试试"
+      />
+    </template>
 
-      <el-table :data="g.tasks" size="small" border class="tbl">
-        <el-table-column label="任务标题" min-width="220">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <el-input
-              :model-value="row.title"
-              size="small"
-              placeholder="任务标题"
-              @blur="(v: string) => onTitleBlur(row, v)"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="开始时间" width="210">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <TaskTimeField
-              :text="draftOf(row).start"
-              :iso="row.startAt"
-              :period-start="periodStart"
-              :allow-future="!timeRequiredFor(row)"
-              :placeholder="timeRequiredFor(row) ? '如 周四 10:00' : '非必填，可留空'"
-              :invalid="timeRequiredFor(row) && row.warnings.includes('DATE_PARSE_FAILED')"
-              @update:text="(v: string) => (draftOf(row).start = v)"
-              @commit="commitTime(row)"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="结束时间" width="210">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <TaskTimeField
-              :text="draftOf(row).end"
-              :iso="row.endAt"
-              :period-start="periodStart"
-              :allow-future="true"
-              placeholder="可留空"
-              @update:text="(v: string) => (draftOf(row).end = v)"
-              @commit="commitTime(row)"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="星期" width="100">
-          <template #default="{ row }: { row: TaskItemDto }">
+    <template v-else>
+      <OOCard title="识别结果明细" subtitle="按分区分组展示，可直接行内编辑后自动保存" flush>
+        <!-- 分区筛选 + 操作 -->
+        <OOToolbar>
+          <template #left>
             <el-select
-              :model-value="row.weekday"
-              size="small"
-              @change="(v: number) => onWeekdayChange(row, v)"
-            >
-              <el-option v-for="(w, i) in WEEKDAYS" :key="i" :label="w" :value="i" />
-            </el-select>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="识别质量" width="130">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <div class="conf-cell">
-              <el-tag
-                size="small"
-                :type="row.confidenceLevel === 'normal' ? 'success' : row.confidenceLevel === 'warning' ? 'warning' : 'danger'"
-                effect="plain"
-              >
-                {{ (row.confidence * 100).toFixed(0) }}%
-              </el-tag>
-              <el-button
-                v-if="row.confidenceLevel !== 'normal'"
-                link
-                size="small"
-                @click="compareTask = row"
-              >
-                对照
-              </el-button>
-              <el-tag v-if="row.reviewed" size="small" type="success" effect="dark">已确认</el-tag>
-              <el-tag v-else-if="row.confidenceLevel !== 'normal'" size="small" type="warning" effect="dark">
-                {{ CONF_LABEL[row.confidenceLevel] }}
-              </el-tag>
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="标记" width="130">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <el-tag v-if="row.outOfPeriod" size="small" type="warning" title="任务时间落在本周报周期之外">
-              越界
-            </el-tag>
-            <el-tag
-              v-if="!timeRequiredFor(row) && !(row.startAt || '').trim()"
-              size="small"
-              type="info"
-              effect="plain"
-              :title="timeOptionalNote"
-            >
-              仅计量
-            </el-tag>
-            <el-tag v-if="row.manual" size="small" type="info" effect="plain">手工</el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="统计分类" width="130">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <el-select
-              :model-value="row.statCategory"
-              size="small"
-              placeholder="未分类"
-              @change="(v: string) => onCategoryChange(row, v)"
-            >
-              <el-option
-                v-for="c in ASSIGNABLE_CATEGORIES"
-                :key="c"
-                :label="STAT_CATEGORY_LABELS[c]"
-                :value="c"
-              />
-            </el-select>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="客户" width="190">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <el-select
-              :model-value="row.customerId"
-              size="small"
+              v-model="filterPartition"
+              placeholder="全部分区"
               clearable
-              placeholder="未关联"
-              @change="(v: number | null) => onCustomerChange(row, v ?? null)"
-            >
-              <el-option
-                v-for="c in customers"
-                :key="c.id"
-                :label="c.name"
-                :value="c.id"
-              />
-            </el-select>
-            <div v-if="row.customerName" class="cust-hint">
-              <template v-if="row.customerMatch === 'ambiguous'">
-                <el-tag size="small" type="warning" effect="plain">同名待选</el-tag>
-              </template>
-              <template v-else-if="row.customerMatch === 'none'">
-                <el-tag size="small" type="info" effect="plain">未建档</el-tag>
-              </template>
-              <template v-else-if="row.customerMatch === 'manual'">
-                <el-tag size="small" type="success" effect="plain">人工指定</el-tag>
-              </template>
-              <span v-else-if="row.customerName" class="cust-name">{{ row.customerName }}</span>
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="归属分区" width="140">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <el-select
-              :model-value="row.partition"
               size="small"
-              @change="(v: PartitionId) => onPartitionChange(row, v)"
+              class="w-160"
             >
               <el-option v-for="p in PARTITIONS" :key="p.id" :label="p.label" :value="p.id" />
             </el-select>
+            <el-checkbox v-model="filterIssue" label="只看待确认" />
           </template>
-        </el-table-column>
-
-        <el-table-column label="操作" width="110" fixed="right">
-          <template #default="{ row }: { row: TaskItemDto }">
-            <el-button
-              v-if="!row.reviewed && row.confidenceLevel !== 'normal'"
-              link
-              type="primary"
-              size="small"
-              @click="markReviewed(row)"
-            >
-              确认
+          <template #right>
+            <el-button v-if="issueCount > 0" size="small" @click="confirmAllVisible">
+              批量确认（当前视图）
             </el-button>
-            <el-button link type="danger" size="small" @click="removeTask(row)">删除</el-button>
+            <el-button size="small" type="primary" plain @click="creating = true">
+              手工新增
+            </el-button>
           </template>
-        </el-table-column>
-      </el-table>
-    </section>
+        </OOToolbar>
+
+        <!-- 分区分组表格 -->
+        <section v-for="g in grouped" :key="g.id" class="group">
+          <div class="group-head">
+            <OOSectionTitle :title="g.label" :description="`共 ${g.tasks.length} 条任务`" />
+          </div>
+
+          <el-table :data="g.tasks" size="small" class="tbl">
+          <el-table-column label="任务标题" min-width="220">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <el-input
+                :model-value="row.title"
+                size="small"
+                placeholder="任务标题"
+                @blur="(v: string) => onTitleBlur(row, v)"
+              />
+            </template>
+          </el-table-column>
+
+          <el-table-column label="开始时间" width="210">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <TaskTimeField
+                :text="draftOf(row).start"
+                :iso="row.startAt"
+                :period-start="periodStart"
+                :allow-future="!timeRequiredFor(row)"
+                :placeholder="timeRequiredFor(row) ? '如 周四 10:00' : '非必填，可留空'"
+                :invalid="timeRequiredFor(row) && row.warnings.includes('DATE_PARSE_FAILED')"
+                @update:text="(v: string) => (draftOf(row).start = v)"
+                @commit="commitTime(row)"
+              />
+            </template>
+          </el-table-column>
+
+          <el-table-column label="结束时间" width="210">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <TaskTimeField
+                :text="draftOf(row).end"
+                :iso="row.endAt"
+                :period-start="periodStart"
+                :allow-future="true"
+                placeholder="可留空"
+                @update:text="(v: string) => (draftOf(row).end = v)"
+                @commit="commitTime(row)"
+              />
+            </template>
+          </el-table-column>
+
+          <el-table-column label="星期" width="100">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <el-select
+                :model-value="row.weekday"
+                size="small"
+                @change="(v: number) => onWeekdayChange(row, v)"
+              >
+                <el-option v-for="(w, i) in WEEKDAYS" :key="i" :label="w" :value="i" />
+              </el-select>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="识别质量" width="130">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <div class="conf-cell">
+                <el-tag
+                  size="small"
+                  :type="row.confidenceLevel === 'normal' ? 'success' : row.confidenceLevel === 'warning' ? 'warning' : 'danger'"
+                  effect="plain"
+                >
+                  <span class="oo-num">{{ (row.confidence * 100).toFixed(0) }}%</span>
+                </el-tag>
+                <el-button
+                  v-if="row.confidenceLevel !== 'normal'"
+                  link
+                  size="small"
+                  @click="compareTask = row"
+                >
+                  对照
+                </el-button>
+                <el-tag v-if="row.reviewed" size="small" type="success" effect="dark">已确认</el-tag>
+                <el-tag v-else-if="row.confidenceLevel !== 'normal'" size="small" type="warning" effect="dark">
+                  {{ CONF_LABEL[row.confidenceLevel] }}
+                </el-tag>
+              </div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="标记" width="130">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <el-tag v-if="row.outOfPeriod" size="small" type="warning" title="任务时间落在本周报周期之外">
+                越界
+              </el-tag>
+              <el-tag
+                v-if="!timeRequiredFor(row) && !(row.startAt || '').trim()"
+                size="small"
+                type="info"
+                effect="plain"
+                :title="timeOptionalNote"
+              >
+                仅计量
+              </el-tag>
+              <el-tag v-if="row.manual" size="small" type="info" effect="plain">手工</el-tag>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="统计分类" width="130">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <el-select
+                :model-value="row.statCategory"
+                size="small"
+                placeholder="未分类"
+                @change="(v: string) => onCategoryChange(row, v)"
+              >
+                <el-option
+                  v-for="c in ASSIGNABLE_CATEGORIES"
+                  :key="c"
+                  :label="STAT_CATEGORY_LABELS[c]"
+                  :value="c"
+                />
+              </el-select>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="客户" width="190">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <el-select
+                :model-value="row.customerId"
+                size="small"
+                clearable
+                placeholder="未关联"
+                @change="(v: number | null) => onCustomerChange(row, v ?? null)"
+              >
+                <el-option
+                  v-for="c in customers"
+                  :key="c.id"
+                  :label="c.name"
+                  :value="c.id"
+                />
+              </el-select>
+              <div v-if="row.customerName" class="cust-hint">
+                <template v-if="row.customerMatch === 'ambiguous'">
+                  <el-tag size="small" type="warning" effect="plain">同名待选</el-tag>
+                </template>
+                <template v-else-if="row.customerMatch === 'none'">
+                  <el-tag size="small" type="info" effect="plain">未建档</el-tag>
+                </template>
+                <template v-else-if="row.customerMatch === 'manual'">
+                  <el-tag size="small" type="success" effect="plain">人工指定</el-tag>
+                </template>
+                <span v-else-if="row.customerName" class="cust-name">{{ row.customerName }}</span>
+              </div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="归属分区" width="140">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <el-select
+                :model-value="row.partition"
+                size="small"
+                @change="(v: PartitionId) => onPartitionChange(row, v)"
+              >
+                <el-option v-for="p in PARTITIONS" :key="p.id" :label="p.label" :value="p.id" />
+              </el-select>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="操作" width="110" fixed="right">
+            <template #default="{ row }: { row: TaskItemDto }">
+              <el-button
+                v-if="!row.reviewed && row.confidenceLevel !== 'normal'"
+                link
+                type="primary"
+                size="small"
+                @click="markReviewed(row)"
+              >
+                确认
+              </el-button>
+              <el-button link type="danger" size="small" @click="removeTask(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        </section>
+      </OOCard>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .review-tab {
-  padding-bottom: 24px;
+  padding-bottom: var(--oo-space-6);
 }
-.cust-hint {
-  margin-top: 2px;
-  font-size: 11px;
-  line-height: 1.5;
-}
-.cust-name {
-  color: #909399;
-}
-.review-bar {
-  display: flex;
+
+.oo-btn-icon {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+  margin-right: var(--oo-space-1);
 }
-.review-bar .spacer {
-  flex: 1;
+
+/* —— 概览指标 —— */
+.review-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  gap: var(--oo-space-3);
 }
-.review-bar .w-160 {
+
+/* —— 筛选栏 —— */
+.w-160 {
   width: 160px;
 }
-.period {
-  font-weight: 600;
-}
+
+/* —— 分组卡片 —— */
 .group {
-  margin-bottom: 20px;
+  padding: var(--oo-space-4) var(--oo-space-5) 0;
 }
+
+.group:last-child {
+  padding-bottom: var(--oo-space-4);
+}
+
 .group-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: var(--oo-space-3);
 }
-.group-head h3 {
-  margin: 0;
-  font-size: 15px;
-}
+
 .tbl {
   width: 100%;
 }
+
 .conf-cell {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--oo-space-1);
   flex-wrap: wrap;
 }
+
+.cust-hint {
+  margin-top: 2px;
+  font-size: var(--oo-text-2xs);
+  line-height: var(--oo-line-relaxed);
+}
+
+.cust-name {
+  color: var(--oo-text-tertiary);
+}
+
 .tip {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
   margin: 0;
 }
-/* 原图对照 */
+
+/* —— 对话框标题区 —— */
+.dlg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--oo-space-3);
+  padding-right: var(--oo-space-6);
+}
+
+.dlg-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--oo-radius-sm);
+  background: var(--oo-brand-soft);
+  color: var(--oo-text-brand);
+  flex-shrink: 0;
+}
+
+.dlg-head-text {
+  min-width: 0;
+}
+
+.dlg-title {
+  font-size: var(--oo-text-lg);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
+  line-height: var(--oo-line-tight);
+}
+
+.dlg-sub {
+  margin-top: 2px;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+}
+
+/* —— 原图对照 —— */
 .cmp {
   display: flex;
-  gap: 16px;
+  gap: var(--oo-space-4);
 }
+
 .cmp-img {
   flex: 1;
   min-width: 0;
 }
+
 .cmp-img img {
   width: 100%;
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px;
+  border: 1px solid var(--oo-border-default);
+  border-radius: var(--oo-radius-md);
 }
+
 .cmp-info {
   width: 300px;
   flex-shrink: 0;
 }
+
 .cmp-info h4 {
-  margin: 0 0 10px;
-  font-size: 15px;
+  margin: 0 0 var(--oo-space-3);
+  font-size: var(--oo-text-md);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
 }
+
 .cmp-err {
-  color: var(--el-color-danger);
-  font-size: 12px;
-  margin: 10px 0;
+  color: var(--oo-danger-text);
+  font-size: var(--oo-text-xs);
+  margin: var(--oo-space-3) 0;
 }
+
 .cmp-actions {
-  margin-top: 14px;
+  margin-top: var(--oo-space-4);
+}
+
+@media (max-width: 900px) {
+  .cmp {
+    flex-direction: column;
+  }
+  .cmp-info {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .review-kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--oo-space-2);
+  }
+  .w-160 {
+    width: 100%;
+  }
 }
 </style>

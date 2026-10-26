@@ -4,8 +4,9 @@
  * 三件套缺一不可：**显式勾选 + 有时效 + 可撤销**。
  * 明文 token 只在创建时返回一次，列表里不再显示。
  */
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { bizApi, type BizExpense, type BizShare, type ShareCreated } from "@/api/biz-dashboard";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOStatTile, OOToolbar } from "@/components/ui";
 
 const shares = ref<BizShare[]>([]);
 const expenses = ref<BizExpense[]>([]);
@@ -100,10 +101,21 @@ const money = (n: number) =>
   `¥${Number(n || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const scopeLabel = (code: string) =>
   code === "expense" ? "财务流水" : code === "trip" ? "出差记录" : "工作量";
+
+const activeCount = computed(() => shares.value.filter((s) => s.active).length);
+const revokedCount = computed(() => shares.value.filter((s) => s.revoked).length);
+const totalViews = computed(() => shares.value.reduce((s, x) => s + (x.viewCount ?? 0), 0));
 </script>
 
 <template>
   <div>
+    <OOPageHeader title="选择性分享" description="财务数据涉敏，分享必须显式勾选、限时有效、可随时撤销">
+      <el-button type="primary" @click="openCreate">
+        <OOIcon name="plus" :size="16" style="margin-right: 6px; vertical-align: -2px" />
+        创建分享链接
+      </el-button>
+    </OOPageHeader>
+
     <el-alert v-if="error" type="error" :closable="false" :title="error" show-icon class="mb" />
 
     <el-alert
@@ -114,47 +126,94 @@ const scopeLabel = (code: string) =>
       title="财务数据涉敏：分享仅能包含你显式勾选的记录，且链接有到期时间、可随时撤销。撤销后链接立即失效。"
     />
 
-    <div class="bz-toolbar">
-      <el-button type="primary" @click="openCreate">创建分享链接</el-button>
+    <div class="bz-kpis">
+      <OOStatTile
+        label="生效中链接"
+        icon="🔗"
+        tone="green"
+        :value="activeCount"
+        hint="可正常访问"
+      />
+      <OOStatTile
+        label="已撤销"
+        icon="⊘"
+        tone="red"
+        :value="revokedCount"
+        hint="链接已立即失效"
+      />
+      <OOStatTile
+        label="累计访问"
+        icon="👁"
+        tone="brand"
+        :value="totalViews"
+        hint="全部链接合计"
+      />
     </div>
 
-    <el-table :data="shares" size="small" v-loading="loading" empty-text="尚未创建任何分享">
-      <el-table-column prop="title" label="标题" min-width="140">
-        <template #default="{ row }">{{ row.title || "（未命名）" }}</template>
-      </el-table-column>
-      <el-table-column label="内容" width="110">
-        <template #default="{ row }">{{ scopeLabel(row.scopeKind) }}</template>
-      </el-table-column>
-      <el-table-column prop="scopeCount" label="记录数" width="90" align="right" />
-      <el-table-column label="到期时间" width="180">
-        <template #default="{ row }">
-          {{ row.expiresAt ? new Date(row.expiresAt).toLocaleString("zh-CN") : "—" }}
+    <OOCard title="分享链接" :subtitle="`共 ${shares.length} 条`" flush>
+      <OOToolbar hint="撤销后链接立即失效" dense>
+        <template #right>
+          <span class="oo-text-tertiary oo-text-xs">明文链接仅在创建时展示一次</span>
         </template>
-      </el-table-column>
-      <el-table-column prop="viewCount" label="访问次数" width="90" align="right" />
-      <el-table-column label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag v-if="row.revoked" size="small" type="info">已撤销</el-tag>
-          <el-tag v-else-if="row.expired" size="small" type="warning">已过期</el-tag>
-          <el-tag v-else size="small" type="success">生效中</el-tag>
+      </OOToolbar>
+      <el-table :data="shares" size="small" v-loading="loading">
+        <template #empty>
+          <OOEmptyState variant="inbox" title="尚未创建任何分享" description="点击右上角「创建分享链接」开始" />
         </template>
-      </el-table-column>
-      <el-table-column label="操作" width="100" align="center">
-        <template #default="{ row }">
-          <el-button
-            v-if="row.active"
-            link
-            type="danger"
-            size="small"
-            @click="revoke(row)"
-          >
-            撤销
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+        <el-table-column prop="title" label="标题" min-width="140">
+          <template #default="{ row }">{{ row.title || "（未命名）" }}</template>
+        </el-table-column>
+        <el-table-column label="内容" width="110">
+          <template #default="{ row }">{{ scopeLabel(row.scopeKind) }}</template>
+        </el-table-column>
+        <el-table-column label="记录数" width="90" align="right">
+          <template #default="{ row }"><span class="oo-num">{{ row.scopeCount }}</span></template>
+        </el-table-column>
+        <el-table-column label="到期时间" width="180">
+          <template #default="{ row }">
+            <span class="oo-num">
+              {{ row.expiresAt ? new Date(row.expiresAt).toLocaleString("zh-CN") : "—" }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="访问次数" width="90" align="right">
+          <template #default="{ row }"><span class="oo-num">{{ row.viewCount }}</span></template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.revoked" size="small" type="info" effect="plain">已撤销</el-tag>
+            <el-tag v-else-if="row.expired" size="small" type="warning" effect="plain">已过期</el-tag>
+            <el-tag v-else size="small" type="success" effect="light">生效中</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.active"
+              link
+              type="danger"
+              size="small"
+              @click="revoke(row)"
+            >
+              撤销
+            </el-button>
+            <span v-else class="oo-text-tertiary oo-text-xs">—</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </OOCard>
 
-    <el-dialog v-model="dialog" title="创建分享链接" width="720px">
+    <el-dialog v-model="dialog" width="720px" align-center>
+      <template #header>
+        <div class="oo-dialog-head">
+          <span class="oo-dialog-icon"><OOIcon name="link" :size="18" /></span>
+          <div>
+            <h3 class="oo-dialog-title">创建分享链接</h3>
+            <p class="oo-dialog-desc">仅包含你显式勾选的记录，链接到期或撤销后立即失效</p>
+          </div>
+        </div>
+      </template>
+
       <div v-if="created" class="bz-created">
         <el-alert type="success" :closable="false" show-icon>
           分享已创建，<b>链接只显示这一次</b>（关闭后无法再次查看，请立即复制发给对方）。
@@ -179,21 +238,28 @@ const scopeLabel = (code: string) =>
             <span class="bz-dim">天（最长 90 天）</span>
           </el-form-item>
           <el-form-item label="勾选记录">
-            <el-table
-              :data="expenses"
-              size="small"
-              height="280"
-              empty-text="暂无财务流水可分享"
-              @selection-change="onSelectionChange"
-            >
-              <el-table-column type="selection" width="45" />
-              <el-table-column prop="occurredOn" label="日期" width="105" />
-              <el-table-column prop="category" label="类别" width="90" />
-              <el-table-column label="金额" width="110" align="right">
-                <template #default="{ row }">{{ money(row.amount) }}</template>
-              </el-table-column>
-              <el-table-column prop="note" label="备注" min-width="120" />
-            </el-table>
+            <div class="bz-pick-box">
+              <el-table
+                :data="expenses"
+                size="small"
+                height="280"
+                @selection-change="onSelectionChange"
+              >
+                <template #empty>
+                  <OOEmptyState variant="inbox" title="暂无财务流水可分享" description="先在「财务管理」里录入流水" />
+                </template>
+                <el-table-column type="selection" width="45" />
+                <el-table-column prop="occurredOn" label="日期" width="105" />
+                <el-table-column label="类别" width="90">
+                  <template #default="{ row }">{{ row.category || "未分类" }}</template>
+                </el-table-column>
+                <el-table-column label="金额" width="110" align="right">
+                  <template #default="{ row }"><span class="oo-num">{{ money(row.amount) }}</span></template>
+                </el-table-column>
+                <el-table-column prop="note" label="备注" min-width="120" />
+              </el-table>
+              <p class="bz-picked">已勾选 {{ selected.length }} 条记录</p>
+            </div>
           </el-form-item>
         </el-form>
       </template>
@@ -212,19 +278,65 @@ const scopeLabel = (code: string) =>
 </template>
 
 <style scoped>
-.bz-toolbar {
-  margin-bottom: 12px;
+.bz-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-5);
 }
+
 .bz-created-url {
   display: flex;
-  gap: 8px;
-  margin: 12px 0 8px;
+  gap: var(--oo-space-2);
+  margin: var(--oo-space-3) 0 var(--oo-space-2);
 }
 .bz-dim {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-xs);
+}
+.bz-pick-box {
+  width: 100%;
+}
+.bz-picked {
+  margin: var(--oo-space-2) 0 0;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-secondary);
 }
 .mb {
-  margin-bottom: 12px;
+  margin-bottom: var(--oo-space-5);
+}
+
+.oo-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--oo-space-3);
+}
+.oo-dialog-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--oo-radius-sm);
+  background: var(--oo-brand-soft);
+  color: var(--oo-brand);
+}
+.oo-dialog-title {
+  margin: 0;
+  font-size: var(--oo-text-lg);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
+}
+.oo-dialog-desc {
+  margin: 2px 0 0;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+}
+
+@media (max-width: 560px) {
+  .bz-kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--oo-space-2);
+  }
 }
 </style>

@@ -2,6 +2,7 @@
 /** 出差与路径：出差记录 CRUD + 途经点 + 地图路径可视化。 */
 import { computed, onMounted, ref } from "vue";
 import { bizApi, type BizCapabilities, type BizTrip, type BizTripStop } from "@/api/biz-dashboard";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOStatTile, OOToolbar } from "@/components/ui";
 import TripMap from "./TripMap.vue";
 
 const items = ref<BizTrip[]>([]);
@@ -261,18 +262,63 @@ const reasonLabel = (code: string) =>
   caps.value?.tripReasons.find((s) => s.value === code)?.label ?? code;
 const reimburseLabel = (code: string) =>
   caps.value?.reimburseStatus.find((s) => s.value === code)?.label ?? code;
+
+/** KPI 汇总：出差条数、总里程、总花费、待报销金额。 */
+const tripCount = computed(() => items.value.length);
+const totalMileage = computed(() => items.value.reduce((s, t) => s + (t.mileageKm ?? 0), 0));
+const totalCost = computed(() => items.value.reduce((s, t) => s + (t.costAmount ?? 0), 0));
+const pendingReimburse = computed(() =>
+  items.value
+    .filter((t) => t.reimburseStatus && t.reimburseStatus !== "none")
+    .reduce((s, t) => s + Number(t.reimburseAmount ?? 0), 0),
+);
 </script>
 
 <template>
   <div>
+    <OOPageHeader title="出差与路径" description="记录出差行程、途经点与报销状态，并在地图上还原路径">
+      <el-button type="primary" @click="openCreate">
+        <OOIcon name="plus" :size="16" style="margin-right: 6px; vertical-align: -2px" />
+        新增出差
+      </el-button>
+    </OOPageHeader>
+
     <el-alert v-if="error" type="error" :closable="false" :title="error" show-icon class="mb" />
 
-    <el-card shadow="never" class="mb">
-      <template #header>
-        <div class="hdr">
-          <span>出差路径地图</span>
-          <el-button type="primary" size="small" @click="openCreate">新增出差</el-button>
-        </div>
+    <div class="bz-kpis">
+      <OOStatTile
+        label="出差记录"
+        icon="T"
+        tone="brand"
+        :value="tripCount"
+        hint="全部行程条目"
+      />
+      <OOStatTile
+        label="总里程"
+        icon="M"
+        tone="teal"
+        :value="`${totalMileage.toFixed(0)} km`"
+        hint="累计公里数"
+      />
+      <OOStatTile
+        label="总花费"
+        icon="¥"
+        tone="amber"
+        :value="`¥${totalCost.toFixed(2)}`"
+        hint="累计出行成本"
+      />
+      <OOStatTile
+        label="报销金额"
+        icon="R"
+        tone="purple"
+        :value="`¥${pendingReimburse.toFixed(2)}`"
+        hint="非「无需报销」的合计"
+      />
+    </div>
+
+    <OOCard title="出差路径地图" subtitle="每条出差按出发地 → 途经点 → 目的地连成一条路径" class="mb">
+      <template #actions>
+        <el-button size="small" type="primary" plain @click="openCreate">新增出差</el-button>
       </template>
       <el-alert
         v-if="!mapConfigured"
@@ -283,62 +329,91 @@ const reimburseLabel = (code: string) =>
         class="mb"
       />
       <TripMap v-else :markers="mapMarkers" :path-lines="mapPathLines" height="380px" />
-    </el-card>
+    </OOCard>
 
-    <el-table :data="items" size="small" v-loading="loading" empty-text="暂无出差记录">
-      <el-table-column prop="title" label="主题" min-width="140" />
-      <el-table-column label="客户" width="140">
-        <template #default="{ row }">
-          {{ customers.find((c) => c.id === row.customerId)?.name ?? "—" }}
+    <OOCard title="出差记录" :subtitle="`共 ${items.length} 条`" flush>
+      <OOToolbar dense hint="点击行尾「编辑」可调整行程与报销信息">
+        <template #right>
+          <span class="oo-text-tertiary oo-text-xs">地图数据由服务端代理腾讯地图接口</span>
         </template>
-      </el-table-column>
-      <el-table-column label="路线" min-width="180">
-        <template #default="{ row }">
-          {{ row.originName || "—" }} → {{ row.destName || "—" }}
-          <span v-if="(row.stops ?? []).length" class="bz-dim">
-            （{{ (row.stops ?? []).length }} 站）
-          </span>
+      </OOToolbar>
+      <el-table :data="items" size="small" v-loading="loading">
+        <template #empty>
+          <OOEmptyState variant="inbox" title="暂无出差记录" description="点击右上角「新增出差」记录第一行程" />
         </template>
-      </el-table-column>
-      <el-table-column prop="startDate" label="开始" width="110" />
-      <el-table-column prop="endDate" label="结束" width="110" />
-      <el-table-column label="交通" width="80">
-        <template #default="{ row }">{{ transportLabel(row.transport) }}</template>
-      </el-table-column>
-      <el-table-column prop="mileageKm" label="里程(km)" width="100" align="right" />
-      <el-table-column prop="costAmount" label="花费" width="110" align="right" />
-      <el-table-column label="事由" width="100">
-        <template #default="{ row }">
-          <span v-if="row.reasonCode">{{ reasonLabel(row.reasonCode) }}</span>
-          <span v-else class="bz-dim">—</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="报销" width="120">
-        <template #default="{ row }">
-          <el-tag size="small" effect="plain">{{ reimburseLabel(row.reimburseStatus) }}</el-tag>
-          <div v-if="row.reimburseAmount" class="bz-dim">
-            ¥{{ Number(row.reimburseAmount).toFixed(2) }}
+        <el-table-column prop="title" label="主题" min-width="140">
+          <template #default="{ row }">{{ row.title || "（未命名）" }}</template>
+        </el-table-column>
+        <el-table-column label="客户" width="140">
+          <template #default="{ row }">
+            {{ customers.find((c) => c.id === row.customerId)?.name ?? "—" }}
+          </template>
+        </el-table-column>
+        <el-table-column label="路线" min-width="180">
+          <template #default="{ row }">
+            {{ row.originName || "—" }} → {{ row.destName || "—" }}
+            <span v-if="(row.stops ?? []).length" class="bz-dim">
+              （{{ (row.stops ?? []).length }} 站）
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="开始" width="110">
+          <template #default="{ row }"><span class="oo-num">{{ row.startDate || "—" }}</span></template>
+        </el-table-column>
+        <el-table-column label="结束" width="110">
+          <template #default="{ row }"><span class="oo-num">{{ row.endDate || "—" }}</span></template>
+        </el-table-column>
+        <el-table-column label="交通" width="80">
+          <template #default="{ row }">{{ transportLabel(row.transport) }}</template>
+        </el-table-column>
+        <el-table-column label="里程(km)" width="100" align="right">
+          <template #default="{ row }"><span class="oo-num">{{ Number(row.mileageKm ?? 0).toFixed(0) }}</span></template>
+        </el-table-column>
+        <el-table-column label="花费" width="110" align="right">
+          <template #default="{ row }"><span class="oo-num">¥{{ Number(row.costAmount ?? 0).toFixed(2) }}</span></template>
+        </el-table-column>
+        <el-table-column label="事由" width="100">
+          <template #default="{ row }">
+            <span v-if="row.reasonCode">{{ reasonLabel(row.reasonCode) }}</span>
+            <span v-else class="bz-dim">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="报销" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ reimburseLabel(row.reimburseStatus) }}</el-tag>
+            <div v-if="row.reimburseAmount" class="bz-dim oo-num">
+              ¥{{ Number(row.reimburseAmount).toFixed(2) }}
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" effect="light">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="120" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+            <el-popconfirm title="删除该出差记录？" @confirm="remove(row)">
+              <template #reference>
+                <el-button link type="danger" size="small">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+    </OOCard>
+
+    <el-dialog v-model="dialog" width="720px" align-center>
+      <template #header>
+        <div class="oo-dialog-head">
+          <span class="oo-dialog-icon"><OOIcon name="route" :size="18" /></span>
+          <div>
+            <h3 class="oo-dialog-title">{{ editing ? "编辑出差" : "新增出差" }}</h3>
+            <p class="oo-dialog-desc">填写行程与报销信息；坐标可自动解析，也可手动填写</p>
           </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag size="small">{{ statusLabel(row.status) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="120" align="center">
-        <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-          <el-popconfirm title="删除该出差记录？" @confirm="remove(row)">
-            <template #reference>
-              <el-button link type="danger" size="small">删除</el-button>
-            </template>
-          </el-popconfirm>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <el-dialog v-model="dialog" :title="editing ? '编辑出差' : '新增出差'" width="720px">
+        </div>
+      </template>
       <el-form label-width="90px">
         <el-form-item label="主题">
           <el-input v-model="form.title" placeholder="如：XX客户年度巡检" />
@@ -368,12 +443,12 @@ const reimburseLabel = (code: string) =>
         </el-form-item>
         <el-form-item v-if="manualCoords" label="经纬度">
           <div class="row">
-            <el-input v-model="manual.originLng" placeholder="出发地经度" style="width:150px" />
-            <el-input v-model="manual.originLat" placeholder="出发地纬度" style="width:150px" />
+            <el-input v-model="manual.originLng" placeholder="出发地经度" class="coord" />
+            <el-input v-model="manual.originLat" placeholder="出发地纬度" class="coord" />
           </div>
-          <div class="row" style="margin-top:8px">
-            <el-input v-model="manual.destLng" placeholder="目的地经度" style="width:150px" />
-            <el-input v-model="manual.destLat" placeholder="目的地纬度" style="width:150px" />
+          <div class="row mt-2">
+            <el-input v-model="manual.destLng" placeholder="目的地经度" class="coord" />
+            <el-input v-model="manual.destLat" placeholder="目的地纬度" class="coord" />
             <el-button @click="applyManualCoords">应用坐标</el-button>
           </div>
           <div class="hint">格式：小数度（如 116.307503, 39.984104），北京为东经北纬。留空表示该端无坐标。</div>
@@ -474,19 +549,25 @@ const reimburseLabel = (code: string) =>
 </template>
 
 <style scoped>
-.hdr {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.bz-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-5);
 }
+
 .row {
   display: flex;
-  gap: 8px;
+  gap: var(--oo-space-2);
   width: 100%;
+  flex-wrap: wrap;
+}
+.mt-2 {
+  margin-top: var(--oo-space-2);
 }
 .hint {
-  color: #909399;
-  font-size: 12px;
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-xs);
   line-height: 1.6;
 }
 .stops {
@@ -494,9 +575,13 @@ const reimburseLabel = (code: string) =>
 }
 .stop-row {
   display: flex;
-  gap: 6px;
+  gap: var(--oo-space-1);
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: var(--oo-space-2);
+  flex-wrap: wrap;
+}
+.coord {
+  width: 150px;
 }
 .num {
   width: 110px;
@@ -505,10 +590,50 @@ const reimburseLabel = (code: string) =>
   width: 100%;
 }
 .bz-dim {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-xs);
 }
 .mb {
-  margin-bottom: 12px;
+  margin-bottom: var(--oo-space-5);
+}
+
+.oo-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--oo-space-3);
+}
+.oo-dialog-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--oo-radius-sm);
+  background: var(--oo-brand-soft);
+  color: var(--oo-brand);
+}
+.oo-dialog-title {
+  margin: 0;
+  font-size: var(--oo-text-lg);
+  font-weight: var(--oo-weight-semibold);
+  color: var(--oo-text-primary);
+}
+.oo-dialog-desc {
+  margin: 2px 0 0;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+}
+
+@media (max-width: 560px) {
+  .bz-kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--oo-space-2);
+  }
+  .coord {
+    width: 100%;
+  }
+  .num {
+    width: 92px;
+  }
 }
 </style>
