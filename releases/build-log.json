@@ -115,5 +115,14 @@
     "fpk": "omnioffice_1.0.30_all_20261026.fpk",
     "commit": null,
     "note": "v1.0.30: 新增出差主题（事由/报销状态/报销金额/关联周报任务）+ 客户来源字段（7 项枚举，支持自定义说明）+ 周报 AI 识别自动指认客户并回填来源；修复数据库迁移加 NOT NULL 列缺 DEFAULT 导致真机升级失败；修复地图配额 429 错误提示丢失并加熔断与手动坐标兜底"
+  },
+  {
+    "ts": "2026-10-26T15:29:37.576Z",
+    "appname": "omnioffice",
+    "version": "1.0.31",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.31_all_20261026.fpk",
+    "commit": null,
+    "note": "UI 重构：ColorOS 风格设计体系 + 17 页面落地 + 742 节点对比度零未达标"
   }
 ]
