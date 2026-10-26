@@ -87,8 +87,8 @@
 | 项目 | 用途 | 地址 |
 |---|---|---|
 | 官网 | 项目对外主页 | <https://blog.kwink.cn> |
-| Gitee 仓库 | 主远端 | <https://gitee.com/cool_fashion_palace_2514978304/kwinkoffice> |
-| GitCode 仓库 | 镜像远端 | <https://gitcode.com/qq_38832318/kwinkoffice> |
+| Gitee 仓库 | 主远端 | <https://gitee.com/cool_fashion_palace_2514978304/Kwink-Office> |
+| GitCode 仓库 | 镜像远端 | <https://gitcode.com/qq_38832318/Kwink-Office> |
 
 ---
 

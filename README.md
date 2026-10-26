@@ -177,8 +177,8 @@ powershell -ExecutionPolicy Bypass -File tools\release.ps1
 
 | 远端 | 地址 |
 |---|---|
-| `gitee` | `git@gitee.com:cool_fashion_palace_2514978304/kwinkoffice.git` |
-| `gitcode` | `git@gitcode.com:qq_38832318/kwinkoffice.git` |
+| `gitee` | `git@gitee.com:cool_fashion_palace_2514978304/Kwink-Office.git` |
+| `gitcode` | `git@gitcode.com:qq_38832318/Kwink-Office.git` |
 
 ---
 
