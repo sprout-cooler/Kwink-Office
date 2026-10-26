@@ -150,12 +150,18 @@ def list_expenses(
     customer_id: int | None = Query(default=None),
     date_from: str = "",
     date_to: str = "",
+    counterparty: str = "",
     db: Session = Depends(get_db),
     identity: Identity = Depends(_require_identity),
 ):
+    """财务流水列表。
+
+    counterparty 是**交易方**关键字（模糊匹配）。它同时会匹配关联客户的名字，
+    以便 v1.0.32 之前只有客户关联、没有交易方字段的历史流水也能被搜到。
+    """
     return {
         "items": _guard(
-            service.list_expenses, db, identity, kind, customer_id, date_from, date_to
+            service.list_expenses, db, identity, kind, customer_id, date_from, date_to, counterparty
         )
     }
 

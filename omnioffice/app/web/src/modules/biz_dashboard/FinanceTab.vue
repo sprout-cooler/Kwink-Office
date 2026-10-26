@@ -32,6 +32,8 @@ const batches = ref<BillImportBatch[]>([]);
 
 const filterKind = ref("");
 const filterCustomer = ref<number | undefined>(undefined);
+/** 交易方关键字（模糊搜索；后端同时会匹配关联客户名以兼容历史流水） */
+const filterCounterparty = ref("");
 
 const dialog = ref(false);
 const editing = ref<BizExpense | null>(null);
@@ -40,6 +42,9 @@ const form = ref({
   category: "",
   amount: 0,
   occurredOn: new Date().toISOString().slice(0, 10),
+  // 交易方：这笔钱跟谁发生的（自由文本，不要求在客户档案里建过档）
+  counterparty: "",
+  // 关联客户：这笔流水归属哪个客户档案（用于客户维度统计，与交易方是两回事）
   customerId: undefined as number | undefined,
   tripId: undefined as number | undefined,
   note: "",
@@ -51,7 +56,11 @@ async function load() {
   error.value = "";
   try {
     const [list, cs, c, bs] = await Promise.all([
-      bizApi.listExpenses({ kind: filterKind.value, customerId: filterCustomer.value }),
+      bizApi.listExpenses({
+        kind: filterKind.value,
+        customerId: filterCustomer.value,
+        counterparty: filterCounterparty.value,
+      }),
       bizApi.listCustomers(),
       bizApi.capabilities(),
       bizApi.listBillImports(),
@@ -92,6 +101,7 @@ function openCreate() {
     category: "",
     amount: 0,
     occurredOn: new Date().toISOString().slice(0, 10),
+    counterparty: "",
     customerId: undefined,
     tripId: undefined,
     note: "",
@@ -106,6 +116,7 @@ function openEdit(row: BizExpense) {
     category: row.category,
     amount: row.amount,
     occurredOn: row.occurredOn,
+    counterparty: row.counterparty ?? "",
     customerId: row.customerId ?? undefined,
     tripId: row.tripId ?? undefined,
     note: row.note,
@@ -243,8 +254,16 @@ const money = (n: number) =>
     </div>
 
     <OOCard flush class="mb">
-      <OOToolbar hint="按类型与客户筛选">
+      <OOToolbar hint="按交易方、类型或关联客户筛选">
         <template #left>
+          <el-input
+            v-model="filterCounterparty"
+            placeholder="交易方（关键字）"
+            clearable
+            class="w180"
+            @keyup.enter="load"
+            @clear="load"
+          />
           <el-select v-model="filterKind" placeholder="全部类型" clearable class="w180" @change="load">
             <el-option
               v-for="k in caps?.expenseKinds ?? []"
@@ -255,7 +274,7 @@ const money = (n: number) =>
           </el-select>
           <el-select
             v-model="filterCustomer"
-            placeholder="全部客户"
+            placeholder="关联客户"
             clearable
             class="w180"
             @change="load"
@@ -290,9 +309,15 @@ const money = (n: number) =>
             <el-table-column label="类别" width="90">
               <template #default="{ row }">{{ row.category || "未分类" }}</template>
             </el-table-column>
-            <el-table-column label="客户" min-width="110">
+            <el-table-column label="交易方" min-width="120">
               <template #default="{ row }">
-                {{ customers.find((c) => c.id === row.customerId)?.name ?? "—" }}
+                <!-- 交易方为空说明是 v1.0.32 之前录入的流水（当时只记了关联客户），
+                     回落到客户名做读时兼容，避免历史数据在这一列全变成「—」 -->
+                {{
+                  row.counterparty ||
+                  customers.find((c) => c.id === row.customerId)?.name ||
+                  "—"
+                }}
               </template>
             </el-table-column>
             <el-table-column label="金额" width="110" align="right">
@@ -415,8 +440,16 @@ const money = (n: number) =>
         <el-form-item label="日期">
           <el-date-picker v-model="form.occurredOn" type="date" value-format="YYYY-MM-DD" />
         </el-form-item>
-        <el-form-item label="客户">
-          <el-select v-model="form.customerId" clearable placeholder="选择客户（可选）" class="w-full">
+        <el-form-item label="交易方">
+          <el-input v-model="form.counterparty" placeholder="这笔钱跟谁发生的，如：永辉超市（可留空）" />
+        </el-form-item>
+        <el-form-item label="关联客户">
+          <el-select
+            v-model="form.customerId"
+            clearable
+            placeholder="归属哪个客户档案（可选，用于客户维度统计）"
+            class="w-full"
+          >
             <el-option v-for="c in customers" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
         </el-form-item>

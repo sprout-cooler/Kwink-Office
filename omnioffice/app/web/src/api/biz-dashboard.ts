@@ -89,6 +89,8 @@ export interface BizExpense {
   /** v1.0.32 账单导入字段：手录流水这几项全为空 */
   platform: string;
   orderNo: string;
+  /** 交易方：与当前账户相对的一方（我付钱→收款方，我收钱→付款方）。
+   *  与 customerId（关联客户档案）是两个概念，可各自独立有值。 */
   counterparty: string;
   txnType: string;
   importBatchId: number | null;
@@ -109,6 +111,10 @@ export interface BillRow {
   orderNo: string;
   note: string;
   dedupeKey: string;
+  /** 账单原始的「付款方」「收款方」两列（银行流水常见）。
+   *  交易方由这两列按收支方向推导，回传原始值供预览核对。 */
+  payer?: string;
+  payee?: string;
 }
 
 export interface BillPreview {
@@ -297,13 +303,21 @@ export const bizApi = {
 
   // ---- 财务 ----
   listExpenses: (
-    params: { kind?: string; customerId?: number; dateFrom?: string; dateTo?: string } = {},
+    params: {
+      kind?: string;
+      customerId?: number;
+      dateFrom?: string;
+      dateTo?: string;
+      /** 交易方关键字（模糊匹配，同时会匹配关联客户名以兼容历史数据） */
+      counterparty?: string;
+    } = {},
   ) => {
     const q = new URLSearchParams();
     if (params.kind) q.set("kind", params.kind);
     if (params.customerId) q.set("customer_id", String(params.customerId));
     if (params.dateFrom) q.set("date_from", params.dateFrom);
     if (params.dateTo) q.set("date_to", params.dateTo);
+    if (params.counterparty) q.set("counterparty", params.counterparty);
     const s = q.toString();
     return api<{ items: BizExpense[] }>(`/biz-dashboard/expenses${s ? `?${s}` : ""}`);
   },

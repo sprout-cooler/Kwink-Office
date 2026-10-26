@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ...core.identity import Identity
@@ -547,12 +547,25 @@ def list_expenses(
     customer_id: int | None = None,
     date_from: str = "",
     date_to: str = "",
+    counterparty: str = "",
 ) -> list[dict]:
     stmt = select(BizExpense).where(BizExpense.owner_uid == identity.uid)
     if kind:
         stmt = stmt.where(BizExpense.kind == kind)
     if customer_id:
         stmt = stmt.where(BizExpense.customer_id == customer_id)
+    if (counterparty or "").strip():
+        # 交易方关键字搜索。**刻意同时匹配关联客户的名字**：
+        # v1.0.32 之前录入的流水只有 customer_id、没有 counterparty，
+        # 若只搜 counterparty，这些历史流水会「搜不到」，用户会以为数据丢了。
+        # 这里用 OR 把历史口径一起覆盖，等于对历史数据做**读时兼容**而非写时迁移。
+        kw = f"%{(counterparty or '').strip()}%"
+        matched_customers = select(BizCustomer.id).where(
+            BizCustomer.owner_uid == identity.uid, BizCustomer.name.like(kw)
+        )
+        stmt = stmt.where(
+            or_(BizExpense.counterparty.like(kw), BizExpense.customer_id.in_(matched_customers))
+        )
     if date_from:
         stmt = stmt.where(BizExpense.occurred_on >= _norm_date(date_from, "开始日期"))
     if date_to:
@@ -586,6 +599,8 @@ def create_expense(db: Session, identity: Identity, body: dict) -> dict:
         amount=_norm_amount(body.get("amount")),
         occurred_on=_norm_date(body.get("occurredOn"), "发生日期") or _today(),
         note=(body.get("note") or "").strip(),
+        # 交易方：与关联客户（customerId）是两个概念，可各自独立填写
+        counterparty=(body.get("counterparty") or "").strip()[:128],
     )
     db.add(row)
     db.commit()
@@ -609,6 +624,8 @@ def update_expense(db: Session, identity: Identity, eid: int, body: dict) -> dic
         row.customer_id = _opt_int(body.get("customerId"))
     if "tripId" in body:
         row.trip_id = _opt_int(body.get("tripId"))
+    if "counterparty" in body:
+        row.counterparty = (body.get("counterparty") or "").strip()[:128]
     if "note" in body:
         row.note = (body.get("note") or "").strip()
     db.commit()
@@ -1214,7 +1231,7 @@ def _existing_dedupe_keys(
 
     比对口径刻意**保守**（宁可多判重也不要漏判）：
     - 新行有订单号 -> 与库内同平台同订单号比对；
-    - 新行无订单号 -> 与库内同日期同金额同交易对方比对（不看库内有没有订单号），
+    - 新行无订单号 -> 与库内同日期同金额同交易方比对（不看库内有没有订单号），
       因为时间+金额+对方三者一致时，几乎必然是同一笔，漏判会导致重复记账。
     """
     keys: set[str] = set()

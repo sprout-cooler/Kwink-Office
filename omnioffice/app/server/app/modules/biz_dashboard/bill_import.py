@@ -95,6 +95,9 @@ class ParsedRow:
             "txnTime": self.txn_time,
             "txnType": self.txn_type,
             "counterparty": self.counterparty,
+            # 原始的两列也回传：交易方是推导出来的，预览时要让用户能核对推导依据
+            "payer": self.raw.get("payer", ""),
+            "payee": self.raw.get("payee", ""),
             "amount": float(self.amount) if self.amount is not None else None,
             "direction": self.direction,
             "orderNo": self.order_no,
@@ -248,6 +251,31 @@ def parse_direction(value: str) -> str:
     if t in ("不计收支", "不计", "/", "—", "-", "其他", "中性"):
         return DIRECTION_NONE
     return ""
+
+
+def resolve_counterparty(direction: str, direct: str = "", payer: str = "", payee: str = "") -> str:
+    """从「收款方 / 付款方 / 交易对方」三类中定出**交易方**。
+
+    交易方的定义：**与当前账户相对的一方** —— 我付钱时对方是收款方，
+    我收钱时对方是付款方。命名上刻意不叫「客户」：交易对手可以是任何
+    商户、个人或平台，未必在客户档案里建过档。
+
+    取值优先级：
+      1. 账单直接给出相对方列（交易对方 / 收/付款方 / 商户名称）→ 直接用；
+      2. 只有「付款方 + 收款方」两列（银行流水常见）→ **按收支方向选**：
+         支出取收款方，收入取付款方。这两列是绝对方向，不结合方向就会取反；
+      3. 对应方向的那一列缺失 → 回落到另一列（宁可有值给用户核对，
+         也不要留空；用户可在导入预览里逐行确认）。
+    """
+    if (direct or "").strip():
+        return direct.strip()
+    payer = (payer or "").strip()
+    payee = (payee or "").strip()
+    if direction == DIRECTION_EXPENSE:
+        return payee or payer
+    if direction == DIRECTION_INCOME:
+        return payer or payee
+    return payee or payer
 
 
 def build_dedupe_key(
@@ -413,6 +441,8 @@ def _parse_row(
         "txnTime": _cell(cells, mapping.get("txn_time")),
         "txnType": _cell(cells, mapping.get("txn_type")),
         "counterparty": _cell(cells, mapping.get("counterparty")),
+        "payer": _cell(cells, mapping.get("payer")),
+        "payee": _cell(cells, mapping.get("payee")),
         "amount": _cell(cells, mapping.get("amount")),
         "direction": _cell(cells, mapping.get("direction")) if has_direction_col else "",
         "orderNo": _cell(cells, mapping.get("order_no")),
@@ -490,7 +520,11 @@ def _parse_row(
     amount = abs(amount)
 
     order_no = raw["orderNo"]
-    counterparty = raw["counterparty"]
+    # 交易方 = 与当前账户相对的一方。账单给的是绝对方向的「付款方/收款方」两列时，
+    # 必须按收支方向选，否则会把「我」当成交易对手。
+    counterparty = resolve_counterparty(
+        direction, raw["counterparty"], raw["payer"], raw["payee"]
+    )
     return ParsedRow(
         line=line,
         status=STATUS_OK,

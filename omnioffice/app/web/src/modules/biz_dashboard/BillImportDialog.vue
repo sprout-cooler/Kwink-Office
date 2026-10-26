@@ -39,7 +39,7 @@ const PLATFORM_LABEL: Record<string, string> = {
 const FIELD_LABEL: Record<string, string> = {
   txn_time: "交易时间",
   txn_type: "交易类型",
-  counterparty: "交易对方",
+  counterparty: "交易方",
   amount: "金额",
   direction: "收支方向",
   order_no: "订单号",
@@ -244,8 +244,19 @@ const canCommit = computed(
           <template #default="{ row }"><span class="oo-num">{{ row.line }}</span></template>
         </el-table-column>
         <el-table-column prop="txnTime" label="交易时间" width="102" />
-        <el-table-column label="交易对方" min-width="110">
-          <template #default="{ row }">{{ row.counterparty || "—" }}</template>
+        <el-table-column label="交易方" min-width="120">
+          <template #default="{ row }">
+            <!-- 账单只给了「付款方/收款方」两列时，交易方是按收支方向推导出来的
+                 （支出取收款方、收入取付款方），这里用 title 暴露原始值便于核对 -->
+            <el-tooltip
+              v-if="row.payer || row.payee"
+              :content="`付款方：${row.payer || '—'} / 收款方：${row.payee || '—'}`"
+              placement="top"
+            >
+              <span>{{ row.counterparty || "—" }}</span>
+            </el-tooltip>
+            <span v-else>{{ row.counterparty || "—" }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="类型" width="90">
           <template #default="{ row }">{{ row.txnType || "—" }}</template>

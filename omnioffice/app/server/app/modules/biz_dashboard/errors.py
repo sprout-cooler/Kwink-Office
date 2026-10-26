@@ -220,7 +220,7 @@ def bill_no_header() -> BizDashboardError:
     """
     return BizDashboardError(
         "BILL_NO_HEADER",
-        "未能识别账单表头（未找到交易时间、金额、交易对方等任何一列）。"
+        "未能识别账单表头（未找到交易时间、金额、交易方等任何一列）。"
         "请使用支付平台**官方导出的原始账单文件**，不要自行编辑或另存为 Excel 表格",
         400,
     )

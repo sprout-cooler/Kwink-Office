@@ -354,6 +354,11 @@ class BizExpense(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # 关联客户档案（可空）。⚠️ 与 counterparty（交易方）**不是同一个概念**：
+    # 这里是「这笔流水归属哪个客户」，用于客户维度的统计与钻取；
+    # counterparty 是「这笔钱跟谁发生的」，可能是没建过档的路边商户。
+    # 一笔流水可以同时有两者（给客户做的项目、钱付给了某个供应商），
+    # 也可以只有其一。界面上分别叫「关联客户」与「交易方」，不要混用。
     customer_id: Mapped[int | None] = mapped_column(
         ForeignKey("biz_customers.id"), nullable=True, index=True
     )
@@ -378,7 +383,9 @@ class BizExpense(Base):
     platform: Mapped[str] = mapped_column(String(16), default="", index=True, nullable=False)
     # 平台订单号（交易号）。去重的第一判据，可为空（部分平台不导出）
     order_no: Mapped[str] = mapped_column(String(64), default="", index=True, nullable=False)
-    # 交易对方（商户名 / 付款方）
+    # 交易方（v1.0.33 统一命名）：与**本账户相对的一方** —— 我付钱时是收款方，
+    # 我收钱时是付款方。可以是任何商户、个人或平台，**不要求**在客户档案里建过档，
+    # 因此是自由文本，与下面的 customer_id 是两回事。
     counterparty: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     # 平台原始的交易类型（如「商户消费」「转账」「退款」），保留原样便于对账
     txn_type: Mapped[str] = mapped_column(String(64), default="", nullable=False)

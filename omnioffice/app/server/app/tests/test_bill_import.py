@@ -81,6 +81,7 @@ def _expense(db, uid: str, **kw) -> models.BizExpense:
         platform=kw.get("platform", "wechat"),
         order_no=kw.get("order_no", ""),
         counterparty=kw.get("counterparty", ""),
+        customer_id=kw.get("customer_id"),
     )
     db.add(row)
     db.commit()
@@ -198,6 +199,112 @@ class TestDedupeKey(unittest.TestCase):
         a = bi.build_dedupe_key("alipay", "X1", "2024-01-01", Decimal("1"), "A")
         w = bi.build_dedupe_key("wechat", "X1", "2024-01-01", Decimal("1"), "A")
         self.assertNotEqual(a, w)
+
+
+class TestCounterpartyResolution(unittest.TestCase):
+    """交易方取值规则：**取与当前账户相对的一方**。
+
+    「付款方/收款方」是绝对方向的两列，不结合收支方向就会把「我」当成交易对手，
+    所以必须按方向选；账单若已直接给出相对方列（交易对方/收/付款方），则以它为准。
+    """
+
+    def test_direct_relative_column_wins(self):
+        """账单已给出「交易对方」时直接取，不受方向影响。"""
+        self.assertEqual(
+            bi.resolve_counterparty("expense", direct="永辉超市", payer="我", payee="超市"),
+            "永辉超市",
+        )
+
+    def test_expense_takes_payee(self):
+        """我付钱 -> 对方是收款方。"""
+        self.assertEqual(
+            bi.resolve_counterparty("expense", payer="我的账户", payee="供应商A"), "供应商A"
+        )
+
+    def test_income_takes_payer(self):
+        """我收钱 -> 对方是付款方。"""
+        self.assertEqual(
+            bi.resolve_counterparty("income", payer="客户B", payee="我的账户"), "客户B"
+        )
+
+    def test_missing_target_column_falls_back(self):
+        """对应方向那一列缺失时回落到另一列（有值可核对，胜过留空）。"""
+        self.assertEqual(bi.resolve_counterparty("expense", payer="对方X"), "对方X")
+
+    def test_all_empty(self):
+        self.assertEqual(bi.resolve_counterparty("expense"), "")
+
+
+class TestBankStatementCounterparty(unittest.TestCase):
+    """银行流水形态：只有「付款方 + 收款方」两列，必须按方向推导交易方。"""
+
+    BANK_CSV = (
+        "交易时间,摘要,付款方,收款方,金额,收支,余额\n"
+        "2024-05-01 10:00:00,采购付款,我的公司,供应商A,1000.00,支出,5000\n"
+        "2024-05-02 10:00:00,销售回款,客户B,我的公司,2000.00,收入,7000\n"
+    )
+
+    def setUp(self):
+        self.r = bi.parse_bill(self.BANK_CSV.encode("utf-8"), "bank.csv")
+
+    def test_expense_row_uses_payee(self):
+        row = [x for x in self.r.rows if x.direction == bi.DIRECTION_EXPENSE][0]
+        self.assertEqual(row.counterparty, "供应商A")
+        self.assertNotEqual(row.counterparty, "我的公司")
+
+    def test_income_row_uses_payer(self):
+        row = [x for x in self.r.rows if x.direction == bi.DIRECTION_INCOME][0]
+        self.assertEqual(row.counterparty, "客户B")
+
+    def test_raw_columns_exposed_for_review(self):
+        """原始两列要回传，预览时能核对推导依据。"""
+        row = [x for x in self.r.rows if x.direction == bi.DIRECTION_EXPENSE][0]
+        self.assertEqual(row.raw["payer"], "我的公司")
+        self.assertEqual(row.raw["payee"], "供应商A")
+
+
+class TestCounterpartyFilter(unittest.TestCase):
+    """交易方筛选：必须能搜到只有关联客户的历史流水（读时兼容）。"""
+
+    def setUp(self):
+        self.db = _fresh_db()
+        self.uid = "u1"
+
+    def test_search_by_counterparty_text(self):
+        _expense(self.db, self.uid, counterparty="永辉超市")
+        _expense(self.db, self.uid, counterparty="张三")
+        items = service.list_expenses(self.db, _ident(self.uid), counterparty="永辉")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["counterparty"], "永辉超市")
+
+    def test_legacy_customer_only_record_is_searchable(self):
+        """历史流水只有 customer_id、没有交易方 —— 按客户名也应搜得到。"""
+        cust = models.BizCustomer(owner_uid=self.uid, name="老客户公司")
+        self.db.add(cust)
+        self.db.commit()
+        _expense(self.db, self.uid, customer_id=cust.id, counterparty="")
+        items = service.list_expenses(self.db, _ident(self.uid), counterparty="老客户")
+        self.assertEqual(len(items), 1)
+
+    def test_other_users_records_not_matched(self):
+        cust = models.BizCustomer(owner_uid="u2", name="别人的客户")
+        self.db.add(cust)
+        self.db.commit()
+        _expense(self.db, "u2", customer_id=cust.id)
+        items = service.list_expenses(self.db, _ident(self.uid), counterparty="别人的")
+        self.assertEqual(len(items), 0)
+
+    def test_counterparty_is_writable(self):
+        created = service.create_expense(
+            self.db,
+            _ident(self.uid),
+            {"kind": "expense", "amount": 10, "occurredOn": "2024-06-01", "counterparty": "楼下便利店"},
+        )
+        self.assertEqual(created["counterparty"], "楼下便利店")
+        updated = service.update_expense(
+            self.db, _ident(self.uid), created["id"], {"counterparty": "改成超市"}
+        )
+        self.assertEqual(updated["counterparty"], "改成超市")
 
 
 class TestImportFlow(unittest.TestCase):

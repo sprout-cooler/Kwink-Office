@@ -366,7 +366,7 @@ function onSelection(kind: string, rows: { id: number }[]) {
                 <el-table-column label="类别" width="90">
                   <template #default="{ row }">{{ row.category || "未分类" }}</template>
                 </el-table-column>
-                <el-table-column label="交易对方" min-width="110">
+                <el-table-column label="交易方" min-width="120">
                   <template #default="{ row }">{{ row.counterparty || "—" }}</template>
                 </el-table-column>
                 <el-table-column label="金额" width="110" align="right">
