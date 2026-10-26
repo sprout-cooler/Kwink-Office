@@ -74,16 +74,31 @@ function Invoke-Step {
 }
 
 try {
-    # 0) build the web bundle first, every time.
+    # 0) normalize encoding FIRST (UTF-8 no BOM + LF for everything that goes to Linux).
+    #
+    #    ORDER MATTERS -- do not swap these two steps back.
+    #    normalize-encoding.mjs fixes CRLF/BOM in app/web/src/**/*.vue by writing
+    #    the file back, which refreshes the SOURCE mtime. check-fpk.mjs then gates on
+    #    "src.mtime > out.mtime" (frontend bundle staleness). Running normalize AFTER
+    #    the build therefore makes fresh sources look newer than a bundle that was
+    #    actually built from them -> hard gate failure
+    #    ("前端产物陈旧：源码最新改动 ... 晚于产物 ...").
+    #    Real failure: v1.0.31 packaging, 13 .vue files fixed -> build aborted at
+    #    check-fpk-gate with src 15:26:47.356 vs out 15:26:46.810 (0.5s apart).
+    #
+    #    The old comment claimed the opposite ("build first, so the fresh output gets
+    #    normalized too") -- that was wrong: normalize-encoding.mjs SKIP_DIRS contains
+    #    "public", so server/public is never scanned and the bundle was never
+    #    normalized at all. The bundle is LF/no-BOM straight out of vite anyway.
+    Invoke-Step "normalize-encoding" { & $node "$proj\build\normalize-encoding.mjs" }
+
+    # 1) build the web bundle -- after normalization, so the bundle is never
+    #    older than the sources it was built from.
     #    Uses the project-local node/npm under .tools (no global install, no PATH).
-    #    Must run before normalize-encoding so the fresh output gets normalized too.
     Invoke-Step "build-web" {
         Push-Location "$proj\omnioffice\app\web"
         try { & "$proj\.tools\node\npm.cmd" run build } finally { Pop-Location }
     }
-
-    # 1) normalize encoding for every file that goes to Linux (hard rule, guide 1.3)
-    Invoke-Step "normalize-encoding" { & $node "$proj\build\normalize-encoding.mjs" }
 
     # 1b) drop stale hashed web bundles (vite emptyOutDir=false leaves them behind)
     Invoke-Step "clean-web-assets" { & $python "$proj\build\clean_web_assets.py" }

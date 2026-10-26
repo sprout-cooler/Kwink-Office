@@ -264,7 +264,14 @@ if (fs.existsSync(path.join(PKG, "wizard"))) {
           .relative(PKG, src.file)
           .replace(/\\/g, "/")}）晚于产物 ${new Date(out.mtime).toISOString()} 约 ${staleByMin.toFixed(
           1,
-        )} 分钟 —— 真机会加载旧 bundle。先在 omnioffice/app/web 执行 npm run build（或直接用 tools/package-fpk.ps1，它会自动构建）`,
+        )} 分钟 —— 真机会加载旧 bundle。先在 omnioffice/app/web 执行 npm run build（或直接用 tools/package-fpk.ps1，它会自动构建）` +
+          // v1.0.31 新增：这个判定几乎总是被「非语义改动」触发 —— normalize-encoding
+          // 把 CRLF/BOM 修掉后会刷新源码 mtime，若它跑在 build 之后，产物就会显得
+          // 比源码旧（实测相差 0.5 秒）。tools/package-fpk.ps1 的正确顺序是
+          // normalize-encoding -> build-web，别换回去。
+          (staleByMin > 0 && staleByMin < 60
+            ? `\n  提示：相差不到 1 小时，极可能是 normalize-encoding 跑在 build-web 之后刷新了源码 mtime（非语义改动）。检查 tools/package-fpk.ps1 的步骤顺序：必须先 normalize-encoding，再 build-web。`
+            : ""),
       );
     }
 
