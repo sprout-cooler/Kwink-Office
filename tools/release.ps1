@@ -5,7 +5,7 @@
 # Prereq: remotes "gitee", "gitcode" and "github" already added (see git remote -v).
 
 $ErrorActionPreference = 'Stop'
-$proj = "e:\Project\FN\All-in-OneOffice"
+$proj = "e:\Project\FN\KwinkOffice"
 
 # 1) version from manifest
 $verLine = Select-String -Path "$proj\omnioffice\manifest" -Pattern '^version=(.+)$' | Select-Object -First 1

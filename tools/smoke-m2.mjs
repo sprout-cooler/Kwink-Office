@@ -8,7 +8,7 @@ import fs from "node:fs";
 
 const GATEWAY = process.env.SMOKE_GATEWAY || "http://127.0.0.1:8788";
 const BASE = `${GATEWAY}/app/omnioffice/api/weekly-report`;
-const PNG = "e:/Project/FN/All-in-OneOffice/omnioffice/app/ui/images/icon_64.png";
+const PNG = "e:/Project/FN/KwinkOffice/omnioffice/app/ui/images/icon_64.png";
 
 let passed = 0;
 let failed = 0;

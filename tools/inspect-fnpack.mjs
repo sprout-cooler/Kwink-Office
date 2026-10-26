@@ -2,7 +2,7 @@
 // Narrow scan: JSON field tags near wizard struct definitions.
 import fs from "node:fs";
 
-const buf = fs.readFileSync("e:/Project/FN/All-in-OneOffice/.tools/fnpack.exe");
+const buf = fs.readFileSync("e:/Project/FN/KwinkOffice/.tools/fnpack.exe");
 const s = buf.toString("latin1");
 const candidates = [
   "stepTitle", "steptitle", "items", "itemtype", "field", "fields", "label", "labels",

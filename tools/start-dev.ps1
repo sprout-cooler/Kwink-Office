@@ -4,7 +4,7 @@
 # Stop: stop-dev.ps1
 # NOTE: ASCII-only file (PowerShell 5.1 BOM-less ANSI parsing).
 $ErrorActionPreference = 'Stop'
-$proj = "e:\Project\FN\All-in-OneOffice"
+$proj = "e:\Project\FN\KwinkOffice"
 $tools = "$proj\.tools"
 $logs = "$proj\.tools\dev-logs"
 New-Item -ItemType Directory -Force -Path $logs | Out-Null

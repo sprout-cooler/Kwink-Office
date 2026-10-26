@@ -33,7 +33,7 @@ param(
     [string]$Message = ""
 )
 $ErrorActionPreference = 'Stop'
-$proj = "e:\Project\FN\All-in-OneOffice"
+$proj = "e:\Project\FN\KwinkOffice"
 $node = "$proj\.tools\node\node.exe"
 $python = "$proj\.tools\python\python.exe"
 $fnpack = "$proj\.tools\fnpack.exe"
