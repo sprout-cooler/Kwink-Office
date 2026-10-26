@@ -1,0 +1,82 @@
+<script setup lang="ts">
+/**
+ * OOIcon —— 图标映射。
+ *
+ * 【为什么需要它】
+ * 服务端模块注册表已经带 icon 字段（weekly-report / image-tool / biz-dashboard），
+ * 但前端一直用「●」占位符渲染。这里把图标键映射为内联 SVG。
+ *
+ * 【为什么用内联 SVG 而不是图标字体】
+ * 1) NAS 可能离线 —— 字体文件/图标库走 CDN 会加载失败；
+ * 2) SVG 可继承 currentColor，深浅色自动适配，无需两套资源；
+ * 3) 内联 SVG 无额外请求，0 体积依赖。
+ *
+ * 图标风格统一：24×24 网格、1.8px 描边、圆头圆角（round linecap/linejoin），
+ * 与 Element Plus 图标保持同一视觉语言。
+ */
+withDefaults(
+  defineProps<{
+    /** 图标键 */
+    name: string;
+    /** 尺寸（px） */
+    size?: number;
+  }>(),
+  { size: 20 },
+);
+
+const PATHS: Record<string, string> = {
+  // —— 模块级 ——
+  "weekly-report":
+    "M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1zM14 3v5h5M9 13h6M9 17h6M9 9h2",
+  "image-tool":
+    "M4 5h16v14H4zM4 15l4-4 3 3 3-3 6 6M9.5 9.5a1 1 0 11-2 0 1 1 0 012 0z",
+  "biz-dashboard":
+    "M4 20V9M10 20V4M16 20v-7M22 20H2",
+  // —— 功能级 ——
+  settings:
+    "M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5v.2a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1h.2a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z",
+  logout:
+    "M15 17l5-5-5-5M20 12H9M12 20H6a2 2 0 01-2-2V6a2 2 0 012-2h6",
+  search: "M11 19a8 8 0 100-16 8 8 0 000 16zM21 21l-4.3-4.3",
+  bell: "M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0",
+  plus: "M12 5v14M5 12h14",
+  help: "M12 22a10 10 0 100-20 10 10 0 000 20zM9.1 9a3 3 0 115.8 1c0 2-3 3-3 3M12 17h.01",
+  collapse: "M15 18l-6-6 6-6",
+  expand: "M9 18l6-6-6-6",
+  "chevron-left": "M15 18l-6-6 6-6",
+  "chevron-right": "M9 18l6-6-6-6",
+  // —— 业务级 ——
+  users: "M17 20v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9.5 10a4 4 0 100-8 4 4 0 000 8zM23 20v-2a4 4 0 00-3-3.9M16 2.1a4 4 0 010 7.8",
+  calendar: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
+  wallet:
+    "M20 12V8a2 2 0 00-2-2H5a2 2 0 01-2 2v10a2 2 0 002 2h13a2 2 0 002-2v-4M16 12h4v4h-4a2 2 0 010-4z",
+  chart: "M4 20V10M10 20V4M16 20v-6M22 20H2",
+  clock: "M12 22a10 10 0 100-20 10 10 0 000 20zM12 6v6l4 2",
+  upload: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v13",
+  download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V2",
+  edit: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
+  trash: "M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6",
+  check: "M20 6L9 17l-5-5",
+  close: "M18 6L6 18M6 6l12 12",
+  refresh: "M23 4v6h-6M1 20v-6h6M3.5 9a9 9 0 0114.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0020.5 15",
+  location: "M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0zM12 13a3 3 0 100-6 3 3 0 000 6z",
+  route: "M6 19a3 3 0 100-6 3 3 0 000 6zM18 11a3 3 0 100-6 3 3 0 000 6zM15 8H9a3 3 0 000 6h6a3 3 0 010 6H9",
+};
+</script>
+
+<template>
+  <svg
+    :width="size"
+    :height="size"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    :stroke-width="1.8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path :d="PATHS[name] || PATHS['help']" />
+  </svg>
+</template>

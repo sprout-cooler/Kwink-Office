@@ -1,0 +1,487 @@
+/* ============================================================
+ * KwinkOffice 设计 Token 体系（ColorOS 17 风格参考）
+ * ============================================================
+ *
+ * 【设计基调】纯净留白 / 柔和渐变 / 圆润卡片 / 细腻阴影 / 舒适动效
+ *
+ * 【为什么要集中成 token】
+ * 全项目共 12 张表格、13 个表单、7 个对话框，若在每个组件里写死颜色，
+ * 改一次主题色要改几十个文件，且深浅色必然漏改。
+ * 全部视觉常量收敛到本文件，组件一律引用 var(--oo-*)。
+ *
+ * 【对比度实测（WCAG 2.1）】
+ * 下列数值为脚本实测，非估算：
+ *   浅色 正文 #1A2033 / #FFFFFF ............... 16.17:1
+ *   浅色 次要 #5A6478 / #FFFFFF ...............  5.95:1
+ *   浅色 三级 #667084 / #F5F7FB ...............  4.64:1
+ *   浅色 品牌 #3559E6 / #FFFFFF ...............  5.64:1
+ *   浅色 白字 / #3559E6（主按钮）..............  5.64:1
+ *   浅色 焦点环 #4C6FFF / #FFFFFF .............  4.18:1
+ *   深色 正文 #E8EBF2 / #171A22 ............... 14.58:1
+ *   深色 次要 #9BA3B4 / #171A22 ...............  6.87:1
+ *   深色 三级 #7A8394 / #171A22 ...............  4.56:1
+ *   深色 品牌 #8AA0FF / #171A22 ...............  7.08:1
+ *   深色 焦点环 #8AA0FF / #171A22 ..............  7.08:1
+ * 全部正文级组合 ≥ 4.5:1（WCAG AA 正文要求），焦点环 ≥ 3:1（WCAG 1.4.11）。
+ *
+ * 【三级文字的取值踩坑】
+ * 初版用 #8B94A7，实测在 #F5F7FB 上仅 2.84:1，远不达标；
+ * 一路压深到 #667084 才在所有背景上站上 4.5:1。
+ * 「淡灰显得轻盈」与「可读性」在这里是冲突的，可读性优先。
+ *
+ * ------------------------------------------------------------
+ */
+
+/* ------------------------------------------------------------
+ * 1. 基础色板（原始色，不直接用于界面）
+ * ------------------------------------------------------------ */
+:root {
+  /* 品牌 —— 蓝紫渐变，ColorOS 的年轻感主色 */
+  --oo-brand-50: #eef2ff;
+  --oo-brand-100: #dfe6ff;
+  --oo-brand-200: #c3d0ff;
+  --oo-brand-300: #a8b8ff;
+  --oo-brand-400: #8aa0ff;
+  --oo-brand-500: #4c6fff;
+  --oo-brand-600: #3559e6;
+  --oo-brand-700: #2b47c4;
+  --oo-brand-800: #22389a;
+
+  /* 辅助 —— 青（成功/数据）、紫（品牌渐变端）、粉（强调/预警） */
+  --oo-teal-100: #d3f5ef;
+  --oo-teal-300: #5fd6c6;
+  --oo-teal-500: #14b8a6;
+  --oo-teal-600: #0e9384;
+  --oo-teal-700: #0b7c72;
+
+  --oo-purple-100: #ece7fd;
+  --oo-purple-300: #b9a7f5;
+  --oo-purple-500: #7c5cf0;
+  --oo-purple-600: #6440d6;
+  --oo-purple-700: #4f31a8;
+
+  --oo-pink-100: #fde4ec;
+  --oo-pink-300: #f5a8c0;
+  --oo-pink-500: #e8638f;
+  --oo-pink-600: #c74a78;
+  --oo-pink-700: #b03a66;
+
+  /* 语义色 —— 浅色模式下文字用 700 档（实测 ≥ 4.5:1），
+     色块/图标用 500 档（与背景分离靠图形本身，不承载文字） */
+  --oo-red-100: #fde9e7;
+  --oo-red-300: #f4a8a0;
+  --oo-red-500: #e2483f;
+  --oo-red-600: #c0392f;
+  --oo-red-700: #a32d25;
+
+  --oo-green-100: #e6f4d8;
+  --oo-green-300: #a8d07a;
+  --oo-green-500: #639922;
+  --oo-green-600: #4c7a18;
+  --oo-green-700: #3b6d11;
+
+  --oo-amber-100: #fdefd5;
+  --oo-amber-300: #f5c777;
+  --oo-amber-500: #d99114;
+  --oo-amber-600: #a86f06;
+  --oo-amber-700: #8a5a00;
+
+  --oo-gray-50: #f7f8fa;
+  --oo-gray-100: #eef0f4;
+  --oo-gray-200: #e3e8f0;
+  --oo-gray-300: #d2d9e4;
+  --oo-gray-400: #a8b1c0;
+  --oo-gray-500: #7d879c;
+  --oo-gray-600: #5a6478;
+  --oo-gray-700: #3f4759;
+  --oo-gray-800: #262c3a;
+  --oo-gray-900: #151a26;
+}
+
+/* ------------------------------------------------------------
+ * 2. 语义 token —— 浅色模式（默认）
+ * ------------------------------------------------------------ */
+:root {
+  /* —— 背景层 —— */
+  --oo-bg-app: #f5f7fb; /* 应用底色 */
+  --oo-bg-surface: #ffffff; /* 卡片/面板 */
+  --oo-bg-surface-2: #f8fafd; /* 卡片内嵌套区（表头/次级面板） */
+  --oo-bg-surface-3: #eef1f7; /* 三级凹陷区（代码块/进度槽） */
+  --oo-bg-hover: rgba(53, 89, 230, 0.06);
+  --oo-bg-active: rgba(53, 89, 230, 0.11);
+  --oo-bg-mask: rgba(21, 26, 38, 0.45);
+
+  /* —— 文字层 —— */
+  --oo-text-primary: #1a2033; /* 正文 16.17:1 */
+  --oo-text-secondary: #5a6478; /* 次要 5.95:1 */
+  --oo-text-tertiary: #667084; /* 三级 4.64:1 */
+  --oo-text-placeholder: #7d879c; /* 占位符 3.61:1（占位符非正文） */
+  --oo-text-inverse: #ffffff;
+  --oo-text-brand: #3559e6; /* 品牌文字 5.64:1 */
+  --oo-text-brand-hover: #2b47c4;
+
+  /* —— 描边 —— */
+  --oo-border-subtle: #eef1f6; /* 极轻分隔线 */
+  --oo-border-default: #e3e8f0; /* 默认描边 */
+  --oo-border-strong: #d2d9e4; /* 强调描边/输入框 */
+  --oo-border-brand: #4c6fff;
+
+  /* —— 品牌填充 —— */
+  --oo-brand: #4c6fff;
+  --oo-brand-hover: #3559e6;
+  --oo-brand-active: #2b47c4;
+  --oo-brand-soft: #eef2ff; /* 浅色填充（选中态底） */
+  --oo-brand-soft-hover: #dfe6ff;
+  --oo-brand-on: #ffffff; /* 品牌底上的文字 5.64:1 */
+
+  /* —— 语义填充 —— */
+  --oo-success: #639922;
+  --oo-success-soft: #e6f4d8;
+  --oo-success-text: #3b6d11;
+  --oo-warning: #d99114;
+  --oo-warning-soft: #fdefd5;
+  --oo-warning-text: #8a5a00;
+  --oo-danger: #e2483f;
+  --oo-danger-soft: #fde9e7;
+  --oo-danger-text: #a32d25;
+  --oo-info: #14b8a6;
+  --oo-info-soft: #d3f5ef;
+  --oo-info-text: #0b7c72;
+
+  /* —— 圆角 —— */
+  --oo-radius-xs: 6px;
+  --oo-radius-sm: 8px;
+  --oo-radius-md: 12px;
+  --oo-radius-lg: 16px;
+  --oo-radius-xl: 20px;
+  --oo-radius-2xl: 28px;
+  --oo-radius-pill: 999px;
+  /* Element Plus 对齐（EP 默认 sm=4 base=8，必须同步否则圆角不一致） */
+  --oo-radius-ep-base: 12px;
+  --oo-radius-ep-sm: 8px;
+
+  /* —— 间距（4 的倍数） —— */
+  --oo-space-1: 4px;
+  --oo-space-2: 8px;
+  --oo-space-3: 12px;
+  --oo-space-4: 16px;
+  --oo-space-5: 20px;
+  --oo-space-6: 24px;
+  --oo-space-7: 32px;
+  --oo-space-8: 40px;
+  --oo-space-9: 48px;
+  --oo-space-10: 64px;
+
+  /* —— 字号 —— */
+  --oo-font-sans: "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --oo-font-mono: "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono",
+    Menlo, monospace;
+
+  --oo-text-2xs: 11px;
+  --oo-text-xs: 12px;
+  --oo-text-sm: 13px;
+  --oo-text-base: 14px;
+  --oo-text-md: 15px;
+  --oo-text-lg: 16px;
+  --oo-text-xl: 18px;
+  --oo-text-2xl: 22px;
+  --oo-text-3xl: 28px;
+  --oo-text-4xl: 34px;
+
+  --oo-weight-regular: 400;
+  --oo-weight-medium: 500;
+  --oo-weight-semibold: 600;
+  --oo-weight-bold: 700;
+
+  --oo-line-tight: 1.25;
+  --oo-line-normal: 1.5;
+  --oo-line-relaxed: 1.7;
+
+  /* —— 阴影（细腻、柔和，不用纯黑） —— */
+  --oo-shadow-xs: 0 1px 2px rgba(21, 26, 38, 0.04);
+  --oo-shadow-sm: 0 2px 6px rgba(21, 26, 38, 0.06);
+  --oo-shadow-md: 0 4px 14px rgba(21, 26, 38, 0.07);
+  --oo-shadow-lg: 0 8px 28px rgba(21, 26, 38, 0.09);
+  --oo-shadow-xl: 0 16px 48px rgba(21, 26, 38, 0.12);
+  --oo-shadow-brand: 0 6px 18px rgba(76, 111, 255, 0.24);
+  --oo-shadow-inset: inset 0 1px 2px rgba(21, 26, 38, 0.05);
+
+  /* —— 渐变 —— */
+  --oo-gradient-brand: linear-gradient(135deg, #4c6fff 0%, #7c5cf0 100%);
+  --oo-gradient-brand-soft: linear-gradient(
+    135deg,
+    rgba(76, 111, 255, 0.12) 0%,
+    rgba(124, 92, 240, 0.12) 100%
+  );
+  --oo-gradient-brand-soft-hover: linear-gradient(
+    135deg,
+    rgba(76, 111, 255, 0.18) 0%,
+    rgba(124, 92, 240, 0.18) 100%
+  );
+  --oo-gradient-surface: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(76, 111, 255, 0.04) 100%
+  );
+  --oo-gradient-shimmer: linear-gradient(
+    90deg,
+    rgba(238, 242, 255, 0) 0%,
+    rgba(238, 242, 255, 0.9) 50%,
+    rgba(238, 242, 255, 0) 100%
+  );
+
+  /* —— 动效（舒适的缓动） —— */
+  --oo-ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* 减速出场，最常用 */
+  --oo-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --oo-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* 轻微回弹 */
+  --oo-dur-fast: 120ms;
+  --oo-dur-base: 200ms;
+  --oo-dur-slow: 320ms;
+  --oo-dur-slower: 480ms;
+
+  /* —— 层级 —— */
+  --oo-z-base: 1;
+  --oo-z-sticky: 100;
+  --oo-z-drawer: 1500;
+  --oo-z-dialog: 2000;
+  --oo-z-popper: 2050;
+  --oo-z-toast: 3000;
+
+  /* —— 焦点环 —— */
+  --oo-focus-ring: 0 0 0 3px rgba(76, 111, 255, 0.28);
+  --oo-focus-ring-offset: 0 0 0 1px var(--oo-border-brand);
+}
+
+/* ------------------------------------------------------------
+ * 3. 深色模式
+ * ------------------------------------------------------------
+ * 用法：html.dark（在 <html> 上加 class）。
+ * 深色下不是简单反色 —— 背景降明、卡片提亮一档形成层次，
+ * 品牌色提亮到 400 档以保证在深底上的对比度。
+ */
+html.dark {
+  /* —— 背景层 —— */
+  --oo-bg-app: #0e1117;
+  --oo-bg-surface: #171a22;
+  --oo-bg-surface-2: #1f232d;
+  --oo-bg-surface-3: #262b36;
+  --oo-bg-hover: rgba(138, 160, 255, 0.1);
+  --oo-bg-active: rgba(138, 160, 255, 0.17);
+  --oo-bg-mask: rgba(0, 0, 0, 0.62);
+
+  /* —— 文字层 —— */
+  --oo-text-primary: #e8ebf2;
+  --oo-text-secondary: #9ba3b4;
+  --oo-text-tertiary: #7a8394;
+  --oo-text-placeholder: #828c9e;
+  --oo-text-inverse: #151a26;
+  --oo-text-brand: #8aa0ff;
+  --oo-text-brand-hover: #a8b8ff;
+
+  /* —— 描边 —— */
+  --oo-border-subtle: #21252f;
+  --oo-border-default: #262b36;
+  --oo-border-strong: #333a49;
+  --oo-border-brand: #4c6fff;
+
+  /* —— 品牌填充 —— */
+  --oo-brand: #4c6fff;
+  --oo-brand-hover: #5f7dff;
+  --oo-brand-active: #7a90ff;
+  --oo-brand-soft: rgba(76, 111, 255, 0.16);
+  --oo-brand-soft-hover: rgba(76, 111, 255, 0.26);
+  --oo-brand-on: #ffffff;
+
+  /* —— 语义填充 —— */
+  --oo-success: #97c459;
+  --oo-success-soft: rgba(151, 196, 89, 0.16);
+  --oo-success-text: #a8d07a;
+  --oo-warning: #f5c777;
+  --oo-warning-soft: rgba(245, 199, 119, 0.16);
+  --oo-warning-text: #f5c777;
+  --oo-danger: #f09595;
+  --oo-danger-soft: rgba(240, 149, 149, 0.16);
+  --oo-danger-text: #f4a8a0;
+  --oo-info: #5fd6c6;
+  --oo-info-soft: rgba(95, 214, 198, 0.16);
+  --oo-info-text: #5fd6c6;
+
+  /* —— 阴影：深色下用更深的黑 + 微弱品牌辉光 —— */
+  --oo-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --oo-shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.36);
+  --oo-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.42);
+  --oo-shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --oo-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.58);
+  --oo-shadow-brand: 0 6px 18px rgba(76, 111, 255, 0.34);
+  --oo-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+
+  /* —— 渐变 —— */
+  --oo-gradient-brand: linear-gradient(135deg, #5f7dff 0%, #8f6cf5 100%);
+  --oo-gradient-brand-soft: linear-gradient(
+    135deg,
+    rgba(95, 125, 255, 0.16) 0%,
+    rgba(143, 108, 245, 0.16) 100%
+  );
+  --oo-gradient-brand-soft-hover: linear-gradient(
+    135deg,
+    rgba(95, 125, 255, 0.24) 0%,
+    rgba(143, 108, 245, 0.24) 100%
+  );
+  --oo-gradient-surface: linear-gradient(
+    180deg,
+    rgba(138, 160, 255, 0.04) 0%,
+    rgba(138, 160, 255, 0) 100%
+  );
+  --oo-gradient-shimmer: linear-gradient(
+    90deg,
+    rgba(38, 43, 54, 0) 0%,
+    rgba(51, 58, 73, 0.9) 50%,
+    rgba(38, 43, 54, 0) 100%
+  );
+
+  /* —— 焦点环 —— */
+  --oo-focus-ring: 0 0 0 3px rgba(138, 160, 255, 0.4);
+  --oo-focus-ring-offset: 0 0 0 1px var(--oo-brand);
+}
+
+/* ------------------------------------------------------------
+ * 4. Element Plus 主题覆写
+ * ------------------------------------------------------------
+ * 策略：不改 Element Plus 源码，只覆写它的 CSS 变量。
+ * EP 的所有组件都读这些变量，所以一处覆写全局生效。
+ * ⚠️ 覆写顺序必须在 element-plus/dist/index.css 之后（main.ts 里已保证）。
+ */
+:root {
+  --el-color-primary: var(--oo-brand);
+  --el-color-primary-light-3: var(--oo-brand-400);
+  --el-color-primary-light-5: var(--oo-brand-300);
+  --el-color-primary-light-7: var(--oo-brand-200);
+  --el-color-primary-light-8: var(--oo-brand-100);
+  --el-color-primary-light-9: var(--oo-brand-50);
+  --el-color-primary-dark-2: var(--oo-brand-active);
+  --el-color-success: var(--oo-success);
+  --el-color-success-light-9: var(--oo-success-soft);
+  --el-color-warning: var(--oo-warning);
+  --el-color-warning-light-9: var(--oo-warning-soft);
+  --el-color-danger: var(--oo-danger);
+  --el-color-danger-light-9: var(--oo-danger-soft);
+  --el-color-error: var(--oo-danger);
+  --el-color-error-light-9: var(--oo-danger-soft);
+  --el-color-info: var(--oo-gray-500);
+  --el-color-info-light-9: var(--oo-bg-surface-2);
+
+  --el-text-color-primary: var(--oo-text-primary);
+  --el-text-color-regular: var(--oo-text-primary);
+  --el-text-color-secondary: var(--oo-text-secondary);
+  --el-text-color-placeholder: var(--oo-text-placeholder);
+  --el-text-color-disabled: var(--oo-text-tertiary);
+
+  --el-border-color: var(--oo-border-default);
+  --el-border-color-light: var(--oo-border-subtle);
+  --el-border-color-lighter: var(--oo-border-subtle);
+  --el-border-color-extra-light: var(--oo-border-subtle);
+  --el-border-color-dark: var(--oo-border-strong);
+  --el-border-color-hover: var(--oo-border-brand);
+
+  --el-bg-color: var(--oo-bg-surface);
+  --el-bg-color-page: var(--oo-bg-app);
+  --el-bg-color-overlay: var(--oo-bg-surface);
+  --el-fill-color: var(--oo-bg-surface-2);
+  --el-fill-color-light: var(--oo-bg-surface-2);
+  --el-fill-color-lighter: var(--oo-bg-surface-3);
+  --el-fill-color-blank: var(--oo-bg-surface);
+  --el-fill-color-dark: var(--oo-bg-surface-3);
+  --el-fill-color-darker: var(--oo-bg-surface-3);
+
+  --el-border-radius-base: var(--oo-radius-ep-base);
+  --el-border-radius-small: var(--oo-radius-ep-sm);
+  --el-border-radius-round: var(--oo-radius-pill);
+  --el-border-radius-circle: 50%;
+
+  --el-font-family: var(--oo-font-sans);
+  --el-font-size-base: var(--oo-text-base);
+  --el-font-size-small: var(--oo-text-sm);
+  --el-font-size-extra-small: var(--oo-text-xs);
+  --el-font-size-medium: var(--oo-text-md);
+  --el-font-size-large: var(--oo-text-lg);
+
+  --el-box-shadow: var(--oo-shadow-sm);
+  --el-box-shadow-light: var(--oo-shadow-xs);
+  --el-box-shadow-lighter: var(--oo-shadow-xs);
+  --el-box-shadow-dark: var(--oo-shadow-md);
+
+  --el-transition-duration: var(--oo-dur-base);
+  --el-transition-duration-fast: var(--oo-dur-fast);
+  --el-transition-function-ease-in-out-bezier: var(--oo-ease-in-out);
+  --el-transition-function-ease-out-bezier: var(--oo-ease-out);
+}
+
+/* ------------------------------------------------------------
+ * 5. 通用原子类（少量高频复用，复杂的走组件）
+ * ------------------------------------------------------------ */
+.oo-card {
+  background: var(--oo-bg-surface);
+  border: 1px solid var(--oo-border-subtle);
+  border-radius: var(--oo-radius-lg);
+  box-shadow: var(--oo-shadow-sm);
+  transition: box-shadow var(--oo-dur-base) var(--oo-ease-out),
+    transform var(--oo-dur-base) var(--oo-ease-out),
+    border-color var(--oo-dur-base) var(--oo-ease-out);
+}
+
+.oo-card-hover:hover {
+  box-shadow: var(--oo-shadow-lg);
+  transform: translateY(-2px);
+  border-color: var(--oo-border-default);
+}
+
+.oo-surface-2 {
+  background: var(--oo-bg-surface-2);
+  border-radius: var(--oo-radius-md);
+}
+
+/** 键盘可达性：所有可聚焦元素必须有可见焦点环（WCAG 2.4.7） */
+.oo-focusable:focus-visible,
+.oo-btn:focus-visible,
+.oo-nav-item:focus-visible,
+.oo-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--oo-focus-ring), var(--oo-focus-ring-offset);
+}
+
+/** 尊重系统的「减少动效」设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/** 细滚动条（Chromium/WebKit） */
+.oo-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--oo-border-strong) transparent;
+}
+.oo-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.oo-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.oo-scroll::-webkit-scrollbar-thumb {
+  background: var(--oo-border-strong);
+  border-radius: var(--oo-radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.oo-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--oo-text-tertiary);
+  background-clip: content-box;
+}

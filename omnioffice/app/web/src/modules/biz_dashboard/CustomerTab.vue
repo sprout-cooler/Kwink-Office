@@ -2,6 +2,7 @@
 /** 客户管理：客户主数据的增删改查。 */
 import { computed, onMounted, ref } from "vue";
 import { bizApi, type BizCapabilities, type BizCustomer } from "@/api/biz-dashboard";
+import { OOEmptyState, OOPageHeader } from "@/components/ui";
 
 const items = ref<BizCustomer[]>([]);
 const caps = ref<BizCapabilities | null>(null);
@@ -135,70 +136,124 @@ const statusLabel = (code: string) =>
 
 <template>
   <div>
-    <el-alert v-if="error" type="error" :closable="false" :title="error" show-icon class="mb" />
+    <OOPageHeader
+      title="客户管理"
+      description="客户主数据的增删改查，来源字段可由周报联动自动回填"
+      badge="👥"
+    >
+      <el-button type="primary" @click="openCreate">
+        <span class="oo-btn-icon">＋</span>
+        新增客户
+      </el-button>
+    </OOPageHeader>
 
-    <div class="bz-toolbar">
-      <el-input
-        v-model="keyword"
-        placeholder="搜索名称 / 联系人 / 行业"
-        clearable
-        class="bz-search"
-        @keyup.enter="load"
-        @clear="load"
-      />
-      <el-button @click="load">搜索</el-button>
-      <el-select
-        v-model="filterSource"
-        placeholder="全部来源"
-        clearable
-        class="bz-source-filter"
-        @change="load"
-      >
-        <el-option
-          v-for="s in caps?.customerSources ?? []"
-          :key="s.value"
-          :label="s.label"
-          :value="s.value"
+    <el-alert
+      v-if="error"
+      type="error"
+      :closable="false"
+      :title="error"
+      show-icon
+      class="oo-mb-4"
+    />
+
+    <div class="bz-card">
+      <div class="bz-toolbar">
+        <el-input
+          v-model="keyword"
+          placeholder="搜索名称 / 联系人 / 行业"
+          clearable
+          class="bz-search"
+          @keyup.enter="load"
+          @clear="load"
         />
-      </el-select>
-      <el-button type="primary" @click="openCreate">新增客户</el-button>
+        <el-select
+          v-model="filterSource"
+          placeholder="全部来源"
+          clearable
+          class="bz-source-filter"
+          @change="load"
+        >
+          <el-option
+            v-for="s in caps?.customerSources ?? []"
+            :key="s.value"
+            :label="s.label"
+            :value="s.value"
+          />
+        </el-select>
+        <el-button @click="load">搜索</el-button>
+        <span class="oo-spacer" />
+        <span class="bz-count">共 {{ items.length }} 位客户</span>
+      </div>
+
+      <div v-loading="loading" class="bz-table-wrap">
+        <el-table
+          v-if="items.length"
+          :data="items"
+          size="small"
+          row-key="id"
+          class="bz-table"
+        >
+          <el-table-column prop="name" label="客户名称" min-width="160">
+            <template #default="{ row }">
+              <span class="bz-name">{{ row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="来源" width="120">
+            <template #default="{ row }">
+              <el-tag v-if="row.source" size="small" effect="light" class="bz-src-tag">
+                {{ sourceLabels[row.source] ?? row.source }}
+              </el-tag>
+              <span v-else class="bz-muted">未指定</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="industry" label="行业" width="110" />
+          <el-table-column prop="contact" label="联系人" width="110" />
+          <el-table-column prop="phone" label="电话" width="130" />
+          <el-table-column prop="region" label="区域" width="100" />
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">
+                {{ statusLabel(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" align="center">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+              <el-popconfirm
+                title="删除该客户？关联的出差/财务/工时会解绑但保留。"
+                @confirm="remove(row)"
+              >
+                <template #reference>
+                  <el-button link type="danger" size="small">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <OOEmptyState
+          v-else-if="!loading"
+          variant="users"
+          :title="keyword || filterSource ? '没有匹配的客户' : '还没有客户'"
+          :description="
+            keyword || filterSource
+              ? '换个关键词或清除筛选条件试试'
+              : '新增第一位客户后，出差、财务与工时统计都会关联到它'
+          "
+        >
+          <el-button type="primary" @click="openCreate">新增客户</el-button>
+        </OOEmptyState>
+      </div>
     </div>
 
-    <el-table :data="items" size="small" v-loading="loading" empty-text="暂无客户">
-      <el-table-column prop="name" label="客户名称" min-width="160" />
-      <el-table-column label="来源" width="110">
-        <template #default="{ row }">
-          <el-tag v-if="row.source" size="small" effect="plain">
-            {{ sourceLabels[row.source] ?? row.source }}
-          </el-tag>
-          <span v-else class="muted">未指定</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="industry" label="行业" width="110" />
-      <el-table-column prop="contact" label="联系人" width="110" />
-      <el-table-column prop="phone" label="电话" width="130" />
-      <el-table-column prop="region" label="区域" width="100" />
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">
-            {{ statusLabel(row.status) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="120" align="center">
-        <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-          <el-popconfirm title="删除该客户？关联的出差/财务/工时会解绑但保留。" @confirm="remove(row)">
-            <template #reference>
-              <el-button link type="danger" size="small">删除</el-button>
-            </template>
-          </el-popconfirm>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <el-dialog v-model="dialog" :title="editing ? '编辑客户' : '新增客户'" width="620px">
-      <el-form label-width="80px">
+    <el-dialog
+      v-model="dialog"
+      :title="editing ? '编辑客户' : '新增客户'"
+      width="620px"
+      align-center
+    >
+      <el-form label-width="80px" label-position="right">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" placeholder="客户名称" />
         </el-form-item>
@@ -229,7 +284,7 @@ const statusLabel = (code: string) =>
               :value="s.value"
             />
           </el-select>
-          <div v-if="sourceNeedsNote" class="muted mt4">
+          <div v-if="sourceNeedsNote" class="bz-hint oo-mt-2">
             选择「其他」时请补充说明，便于日后按来源统计。
           </div>
         </el-form-item>
@@ -270,28 +325,85 @@ const statusLabel = (code: string) =>
 </template>
 
 <style scoped>
+/* —— 卡片容器 —— */
+.bz-card {
+  background: var(--oo-bg-surface);
+  border: 1px solid var(--oo-border-subtle);
+  border-radius: var(--oo-radius-lg);
+  box-shadow: var(--oo-shadow-sm);
+  overflow: hidden;
+}
+
+/* —— 工具条 —— */
 .bz-toolbar {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: var(--oo-space-2);
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--oo-border-subtle);
+  flex-wrap: wrap;
 }
+
 .bz-search {
   width: 280px;
 }
+
 .bz-source-filter {
   width: 150px;
 }
+
+.bz-count {
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.bz-table-wrap {
+  min-height: 160px;
+}
+
+.bz-table {
+  width: 100%;
+}
+
+.bz-name {
+  font-weight: var(--oo-weight-medium);
+  color: var(--oo-text-primary);
+}
+
+.bz-src-tag {
+  background: var(--oo-brand-soft);
+  color: var(--oo-text-brand);
+  font-weight: var(--oo-weight-medium);
+}
+
+.bz-muted {
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-xs);
+}
+
+.bz-hint {
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-xs);
+  line-height: var(--oo-line-relaxed);
+}
+
 .w-full {
   width: 100%;
 }
-.mb {
-  margin-bottom: 12px;
+
+.oo-btn-icon {
+  margin-right: 2px;
+  font-size: 15px;
 }
-.mt4 {
-  margin-top: 4px;
-}
-.muted {
-  color: #909399;
-  font-size: 12px;
+
+@media (max-width: 768px) {
+  .bz-toolbar {
+    padding: 12px 14px;
+  }
+  .bz-search,
+  .bz-source-filter {
+    width: 100%;
+  }
 }
 </style>

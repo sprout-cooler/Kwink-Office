@@ -1,0 +1,241 @@
+/* ============================================================
+ * 基础样式层 —— 重置 + 全局排版 + 通用动效
+ * ============================================================
+ *
+ * 依赖 tokens.css 先加载（main.ts 里的 import 顺序已保证：
+ * element-plus css → tokens.css → element-theme.css → base.css）。
+ */
+
+/* ------------------------------------------------------------
+ * 重置
+ * ------------------------------------------------------------ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--oo-font-sans);
+  font-size: var(--oo-text-base);
+  line-height: var(--oo-line-normal);
+  color: var(--oo-text-primary);
+  background: var(--oo-bg-app);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* 主题切换时平滑过渡（避免闪白） */
+  transition: background-color var(--oo-dur-slow) var(--oo-ease-out),
+    color var(--oo-dur-slow) var(--oo-ease-out);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--oo-text-brand);
+  text-decoration: none;
+  transition: color var(--oo-dur-base) var(--oo-ease-out);
+}
+
+a:hover {
+  color: var(--oo-text-brand-hover);
+}
+
+button {
+  font-family: inherit;
+}
+
+/* 统一焦点环基线：任何可聚焦元素都有可见指示（WCAG 2.4.7） */
+:focus-visible {
+  outline: 2px solid var(--oo-brand);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------
+ * 滚动条 —— 全局细滚动条
+ * ------------------------------------------------------------ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--oo-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--oo-border-strong);
+  border-radius: var(--oo-radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--oo-text-tertiary);
+  background-clip: content-box;
+}
+
+/* ------------------------------------------------------------
+ * 文本工具类
+ * ------------------------------------------------------------ */
+.oo-text-secondary {
+  color: var(--oo-text-secondary);
+}
+.oo-text-tertiary {
+  color: var(--oo-text-tertiary);
+}
+.oo-text-brand {
+  color: var(--oo-text-brand);
+}
+.oo-text-success {
+  color: var(--oo-success-text);
+}
+.oo-text-danger {
+  color: var(--oo-danger-text);
+}
+.oo-text-warning {
+  color: var(--oo-warning-text);
+}
+
+.oo-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 数字用等宽，避免 KPI 数值跳动时宽度抖动 */
+.oo-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ------------------------------------------------------------
+ * 间距工具类
+ * ------------------------------------------------------------ */
+.oo-mt-2 { margin-top: var(--oo-space-2); }
+.oo-mt-3 { margin-top: var(--oo-space-3); }
+.oo-mt-4 { margin-top: var(--oo-space-4); }
+.oo-mt-5 { margin-top: var(--oo-space-5); }
+.oo-mt-6 { margin-top: var(--oo-space-6); }
+.oo-mb-2 { margin-bottom: var(--oo-space-2); }
+.oo-mb-3 { margin-bottom: var(--oo-space-3); }
+.oo-mb-4 { margin-bottom: var(--oo-space-4); }
+.oo-mb-5 { margin-bottom: var(--oo-space-5); }
+.oo-mb-6 { margin-bottom: var(--oo-space-6); }
+.oo-mb-7 { margin-bottom: var(--oo-space-7); }
+.oo-gap-2 { gap: var(--oo-space-2); }
+.oo-gap-3 { gap: var(--oo-space-3); }
+.oo-gap-4 { gap: var(--oo-space-4); }
+
+/* ------------------------------------------------------------
+ * 入场动效 —— 面板切换时的轻微淡入上浮
+ * ------------------------------------------------------------ */
+@keyframes oo-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes oo-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes oo-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes oo-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes oo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.oo-animate-in {
+  animation: oo-fade-up var(--oo-dur-slow) var(--oo-ease-out) both;
+}
+
+/* ------------------------------------------------------------
+ * 骨架屏
+ * ------------------------------------------------------------ */
+.oo-skeleton {
+  background: var(--oo-gradient-shimmer);
+  background-size: 200% 100%;
+  animation: oo-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--oo-radius-sm);
+}
+
+/* ------------------------------------------------------------
+ * 启动/加载态
+ * ------------------------------------------------------------ */
+.bootstrap-state {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--oo-space-4);
+  padding: var(--oo-space-8);
+  box-sizing: border-box;
+  background: var(--oo-bg-app);
+}
+
+.loading-text {
+  color: var(--oo-text-tertiary);
+  font-size: var(--oo-text-sm);
+  animation: oo-fade-in var(--oo-dur-slow) var(--oo-ease-out) both;
+}

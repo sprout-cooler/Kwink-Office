@@ -3,6 +3,16 @@
 import { computed, onMounted, ref } from "vue";
 import { bizApi, type BizOverview } from "@/api/biz-dashboard";
 import ChartBox from "./ChartBox.vue";
+import { OOCard, OOEmptyState, OOPageHeader, OOStatTile } from "@/components/ui";
+import {
+  chartColor,
+  chartPalette,
+  chartSplitLineColor,
+  chartTextColor,
+  chartTooltipBg,
+  chartTooltipBorder,
+  chartTooltipTextColor,
+} from "@/composables/chart-theme";
 
 const overview = ref<BizOverview | null>(null);
 const loading = ref(true);
@@ -25,29 +35,63 @@ const money = (n: number) =>
   `¥${Number(n || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const hours = (n: number) => `${Number(n || 0).toFixed(1)} h`;
 
+/** 图表公共配置：坐标轴/提示框随深浅色主题切换 */
+function baseOption() {
+  const text = chartTextColor();
+  const split = chartSplitLineColor();
+  return {
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: chartTooltipBg(),
+      borderColor: chartTooltipBorder(),
+      textStyle: { color: chartTooltipTextColor(), fontSize: 12 },
+    },
+    textStyle: { color: text },
+  };
+}
+
 /** 工时趋势（双口径堆叠） */
 const workloadOption = computed(() => {
   const buckets = overview.value?.workload.buckets ?? [];
+  const base = baseOption();
   return {
-    tooltip: { trigger: "axis" },
-    legend: { data: ["周报工时", "台账工时"], top: 0 },
+    ...base,
+    legend: {
+      data: ["周报工时", "台账工时"],
+      top: 0,
+      textStyle: { color: chartTextColor() },
+      itemWidth: 8,
+      itemHeight: 8,
+      icon: "circle",
+    },
     grid: { left: 40, right: 16, top: 32, bottom: 28 },
-    xAxis: { type: "category", data: buckets.map((b) => b.label) },
-    yAxis: { type: "value", name: "小时" },
+    xAxis: {
+      type: "category",
+      data: buckets.map((b) => b.label),
+      axisLine: { lineStyle: { color: chartSplitLineColor() } },
+      axisLabel: { color: chartTextColor() },
+    },
+    yAxis: {
+      type: "value",
+      name: "小时",
+      nameTextStyle: { color: chartTextColor() },
+      axisLabel: { color: chartTextColor() },
+      splitLine: { lineStyle: { color: chartSplitLineColor() } },
+    },
     series: [
       {
         name: "周报工时",
         type: "bar",
         stack: "total",
         data: buckets.map((b) => b.weeklyHours),
-        itemStyle: { color: "#378ADD" },
+        itemStyle: { color: chartColor(0), borderRadius: [4, 4, 0, 0] },
       },
       {
         name: "台账工时",
         type: "bar",
         stack: "total",
         data: buckets.map((b) => b.manualHours),
-        itemStyle: { color: "#5DCAA5" },
+        itemStyle: { color: chartColor(1), borderRadius: [4, 4, 0, 0] },
       },
     ],
   };
@@ -56,16 +100,33 @@ const workloadOption = computed(() => {
 /** 客户工时分布 */
 const customerOption = computed(() => {
   const rows = (overview.value?.workload.byCustomer ?? []).slice(0, 8);
+  const base = baseOption();
+  const palette = chartPalette();
   return {
-    tooltip: { trigger: "item" },
-    legend: { orient: "vertical", right: 0, top: "center" },
+    ...base,
+    tooltip: { ...base.tooltip, trigger: "item" },
+    legend: {
+      orient: "vertical",
+      right: 0,
+      top: "center",
+      textStyle: { color: chartTextColor() },
+      itemWidth: 8,
+      itemHeight: 8,
+      icon: "circle",
+    },
     series: [
       {
         type: "pie",
         radius: ["42%", "68%"],
         center: ["38%", "50%"],
         avoidLabelOverlap: true,
-        data: rows.map((r) => ({ name: r.customerName, value: r.hours })),
+        itemStyle: { borderRadius: 6, borderWidth: 2, borderColor: "transparent" },
+        label: { color: chartTextColor(), fontSize: 12 },
+        data: rows.map((r, i) => ({
+          name: r.customerName,
+          value: r.hours,
+          itemStyle: { color: palette[i % palette.length] },
+        })),
       },
     ],
   };
@@ -74,18 +135,32 @@ const customerOption = computed(() => {
 /** 出差按月 */
 const tripOption = computed(() => {
   const rows = overview.value?.tripsByMonth ?? [];
+  const base = baseOption();
   return {
-    tooltip: { trigger: "axis" },
+    ...base,
     grid: { left: 40, right: 16, top: 16, bottom: 28 },
-    xAxis: { type: "category", data: rows.map((r) => r.label) },
-    yAxis: { type: "value", name: "次" },
+    xAxis: {
+      type: "category",
+      data: rows.map((r) => r.label),
+      axisLine: { lineStyle: { color: chartSplitLineColor() } },
+      axisLabel: { color: chartTextColor() },
+    },
+    yAxis: {
+      type: "value",
+      name: "次",
+      nameTextStyle: { color: chartTextColor() },
+      axisLabel: { color: chartTextColor() },
+      splitLine: { lineStyle: { color: chartSplitLineColor() } },
+    },
     series: [
       {
+        name: "出差次数",
         type: "line",
         smooth: true,
         data: rows.map((r) => r.count),
-        itemStyle: { color: "#D4537E" },
-        areaStyle: { color: "rgba(212,83,126,0.12)" },
+        itemStyle: { color: chartColor(3) },
+        lineStyle: { color: chartColor(3), width: 3 },
+        areaStyle: { color: chartColor(3), opacity: 0.12 },
       },
     ],
   };
@@ -94,103 +169,130 @@ const tripOption = computed(() => {
 
 <template>
   <div class="bz-overview">
+    <OOPageHeader
+      title="总览看板"
+      description="客户、出差、工时与收支的一屏概览，数据来自业务大屏实时统计"
+      badge="📊"
+    >
+      <el-button :loading="loading" @click="load">
+        <span class="oo-btn-icon">↻</span>
+        刷新
+      </el-button>
+    </OOPageHeader>
+
     <el-alert
       v-if="error"
       type="error"
       :closable="false"
       :title="error"
       show-icon
-      class="mb"
+      class="oo-mb-4"
     />
 
-    <div v-loading="loading" class="bz-kpis">
-      <div class="bz-kpi">
-        <p class="bz-kpi-label">客户数</p>
-        <p class="bz-kpi-value">{{ overview?.customers ?? 0 }}</p>
-      </div>
-      <div class="bz-kpi">
-        <p class="bz-kpi-label">出差次数</p>
-        <p class="bz-kpi-value">{{ overview?.trips ?? 0 }}</p>
-      </div>
-      <div class="bz-kpi">
-        <p class="bz-kpi-label">总工时</p>
-        <p class="bz-kpi-value">{{ hours(overview?.workload.totalHours ?? 0) }}</p>
-      </div>
-      <div class="bz-kpi">
-        <p class="bz-kpi-label">收入</p>
-        <p class="bz-kpi-value">{{ money(overview?.totalIncome ?? 0) }}</p>
-      </div>
-      <div class="bz-kpi">
-        <p class="bz-kpi-label">支出</p>
-        <p class="bz-kpi-value">{{ money(overview?.totalExpense ?? 0) }}</p>
-      </div>
-      <div class="bz-kpi">
-        <p class="bz-kpi-label">结余</p>
-        <p
-          class="bz-kpi-value"
-          :style="{ color: (overview?.balance ?? 0) >= 0 ? '#A32D2D' : '#3B6D11' }"
-        >
-          {{ money(overview?.balance ?? 0) }}
-        </p>
-      </div>
+    <div class="bz-kpis">
+      <OOStatTile
+        label="客户数"
+        icon="👥"
+        tone="brand"
+        :value="overview?.customers ?? 0"
+      />
+      <OOStatTile
+        label="出差次数"
+        icon="✈️"
+        tone="purple"
+        :value="overview?.trips ?? 0"
+      />
+      <OOStatTile
+        label="总工时"
+        icon="⏱"
+        tone="teal"
+        :value="hours(overview?.workload.totalHours ?? 0)"
+      />
+      <OOStatTile
+        label="收入"
+        icon="↑"
+        tone="green"
+        :value="money(overview?.totalIncome ?? 0)"
+      />
+      <OOStatTile
+        label="支出"
+        icon="↓"
+        tone="amber"
+        :value="money(overview?.totalExpense ?? 0)"
+      />
+      <OOStatTile
+        label="结余"
+        icon="◎"
+        tone="pink"
+        :value="money(overview?.balance ?? 0)"
+        :hint="(overview?.balance ?? 0) >= 0 ? '本期盈余' : '本期超支'"
+      />
     </div>
 
-    <el-row :gutter="16">
-      <el-col :span="24" :md="12">
-        <el-card shadow="never">
-          <template #header>工作量趋势（周报 + 台账双口径）</template>
-          <ChartBox type="bar" :option="workloadOption" height="280px" />
-        </el-card>
-      </el-col>
-      <el-col :span="24" :md="12">
-        <el-card shadow="never">
-          <template #header>客户工时分布</template>
-          <ChartBox type="pie" :option="customerOption" height="280px" />
-        </el-card>
-      </el-col>
-      <el-col :span="24" :md="12">
-        <el-card shadow="never">
-          <template #header>出差频次（按月）</template>
-          <ChartBox type="line" :option="tripOption" height="240px" />
-        </el-card>
-      </el-col>
-      <el-col :span="24" :md="12">
-        <el-card shadow="never">
-          <template #header>近期客户</template>
-          <el-table :data="overview?.topCustomers ?? []" size="small" empty-text="暂无客户">
-            <el-table-column prop="name" label="名称" />
-            <el-table-column prop="industry" label="行业" width="120" />
-            <el-table-column prop="status" label="状态" width="90" />
-          </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+    <div class="bz-grid">
+      <OOCard title="工作量趋势" subtitle="周报工时 + 台账工时双口径">
+        <ChartBox type="bar" :option="workloadOption" height="280px" />
+      </OOCard>
+
+      <OOCard title="客户工时分布" subtitle="工时占比前 8 位客户">
+        <ChartBox type="pie" :option="customerOption" height="280px" />
+      </OOCard>
+
+      <OOCard title="出差频次" subtitle="按月统计出差次数">
+        <ChartBox type="line" :option="tripOption" height="240px" />
+      </OOCard>
+
+      <OOCard title="近期客户" subtitle="最近录入的客户档案" flush>
+        <el-table
+          v-if="(overview?.topCustomers ?? []).length"
+          :data="overview?.topCustomers ?? []"
+          size="small"
+          empty-text="暂无客户"
+        >
+          <el-table-column prop="name" label="名称" />
+          <el-table-column prop="industry" label="行业" width="120" />
+          <el-table-column prop="status" label="状态" width="90" />
+        </el-table>
+        <OOEmptyState
+          v-else
+          variant="users"
+          title="暂无客户"
+          description="在「客户管理」中新增客户后，这里会显示最近的客户档案"
+        />
+      </OOCard>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .bz-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-5);
 }
-.bz-kpi {
-  background: var(--el-fill-color-light);
-  border-radius: var(--el-border-radius-md);
-  padding: 1rem;
+
+.bz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: var(--oo-space-4);
 }
-.bz-kpi-label {
-  margin: 0 0 6px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+
+.oo-btn-icon {
+  margin-right: 4px;
 }
-.bz-kpi-value {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 500;
+
+@media (max-width: 900px) {
+  .bz-grid {
+    grid-template-columns: 1fr;
+  }
 }
-.mb {
-  margin-bottom: 12px;
+
+/* 窄屏：KPI 改两列，避免单列时每张卡过高、需大量滚动 */
+@media (max-width: 560px) {
+  .bz-kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--oo-space-2);
+  }
 }
 </style>
