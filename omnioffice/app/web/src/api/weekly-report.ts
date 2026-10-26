@@ -70,6 +70,15 @@ export interface TaskItemDto {
   /** AI 从原图抄下来的原文，供人工对照 */
   rawStart: string;
   rawEnd: string;
+  /** 客户关联（周报 → 客户） */
+  /** 识别时的客户名原文（即使客户改名也不变，作为识别证据） */
+  customerName: string;
+  /** 匹配到的客户 id；人工校对后可能是人工指定的 */
+  customerId: number | null;
+  /** matched=唯一命中 / ambiguous=同名多条待人工选 / none=客户未建档 / manual=人工指定 */
+  customerMatch: "matched" | "ambiguous" | "none" | "manual" | "";
+  /** 同名歧义时的候选客户 id */
+  customerAmbiguousIds: number[];
 }
 
 /** 统计分类的中文标签（前端下拉与汇总页共用） */

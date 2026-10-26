@@ -61,6 +61,41 @@ PROMPT_V3 = """你是工作截图信息抽取助手。截图有两类，先判�
 MAX_TOKENS = 2000
 TIMEOUT_S = 60
 
+# ---- 客户指认提示词（客户名单动态注入）--------------------------------
+#
+# 为什么是「指认」而不是「抽取」：
+# 自由抽取会产出「XX科技公司」「xx科技」「XX 科技」这类变体，与客户表对不上，
+# 后续匹配必然失败。而「在给定名单里选一个」输出的天然可精确匹配。
+#
+# 客户名单为空时**不注入**这一段 —— 客户都还没建档，指认没有对象，
+# 此时退回纯抽取（抽到什么算什么，匹配不上就标 none）。
+CUSTOMER_HINT_HEADER = """已知客户名单（只能从里面选，或留空）：
+{list}
+
+6. 每个 task 增加 "customer" 字段：若任务内容明确涉及名单中的某个客户，
+   填该客户的**原名**（与名单完全一致）；涉及多个客户用「、」分隔；
+   没有客户线索填空字符串。名单里没有但确实提到客户时，填你看到的名字。
+"""
+
+CUSTOMER_HINT_FOOTER = """6. 每个 task 增加 "customer" 字段：若任务内容明确涉及某个客户，
+填该客户的名字；没有客户线索填空字符串。
+"""
+
+
+def build_prompt(customer_names: list[str] | None = None) -> str:
+    """构造识别提示词。
+
+    有客户名单时注入名单段（让模型在名单内指认），无名单时用基础版。
+    名单用「、」分隔并限制条数 —— 客户上千时提示词会爆炸。
+    """
+    names = [n.strip() for n in (customer_names or []) if n and n.strip()]
+    if not names:
+        return PROMPT_V3 + CUSTOMER_HINT_FOOTER
+    listed = "、".join(names[:100])
+    if len(names) > 100:
+        listed += f"（共 {len(names)} 个客户，此处仅列出最近 100 个）"
+    return PROMPT_V3 + CUSTOMER_HINT_HEADER.format(list=listed)
+
 # 已知 OpenAI-compatible 端点预设（前端下拉 + wizard tips 一致）。
 # 单一事实来源：core.settings_service.AI_PROVIDERS —— 两处曾各维护一份，
 # 阿里云 2026-09 域名调整时已验证会漏改，故此处只做引用。
@@ -122,6 +157,9 @@ def _normalize_tasks(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "start_time": str(item.get("start_time") or "").strip(),
                 "end_time": str(item.get("end_time") or "").strip(),
                 "status": str(item.get("status") or "").strip(),
+                # 客户名（AI 指认或抽取）。匹配客户表的工作在落库时做（recognize_queue），
+                # 这里只负责把模型给的原文带出来。
+                "customer": str(item.get("customer") or "").strip(),
                 "confidence": max(0.0, min(1.0, confidence)),
             }
         )
@@ -180,12 +218,12 @@ class OpenAICompatibleRecognizer:
         # 百炼 qwen3 系列支持；豆包/自建网关不一定支持，遇到 400 会自动降级并记住结果。
         self.json_mode = json_mode
 
-    async def recognize(self, image_path: str) -> dict[str, Any]:
+    async def recognize(self, image_path: str, customer_names: list[str] | None = None) -> dict[str, Any]:
         import asyncio
 
-        return await asyncio.to_thread(self._call, image_path)
+        return await asyncio.to_thread(self._call, image_path, customer_names)
 
-    def _call(self, image_path: str) -> dict[str, Any]:
+    def _call(self, image_path: str, customer_names: list[str] | None = None) -> dict[str, Any]:
         path = Path(image_path)
         if not path.is_file():
             raise RecognizeError(f"图片不存在：{image_path}")
@@ -199,7 +237,7 @@ class OpenAICompatibleRecognizer:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": PROMPT_V3},
+                        {"type": "text", "text": build_prompt(customer_names)},
                         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                     ],
                 }

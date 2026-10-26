@@ -19,8 +19,13 @@ from sqlalchemy import select
 
 from ...core import audit
 from ...core.config import settings
-from ...db.models import Screenshot, TaskItem
+from ...db.models import BizCustomer, Screenshot, TaskItem
 from ...db.session import SessionLocal
+from .customer_link import (
+    MATCH_MATCHED,
+    MATCH_NONE,
+    match_customer,
+)
 from .dateparse import DateParseError, normalize_task
 from .vlm import RecognizeError, build_recognizer
 
@@ -135,6 +140,70 @@ def _worker_loop() -> None:  # 独立线程：每张图用新会话，互不串�
                 _job_owners.pop(sid, None)
 
 
+def _customer_names(db, owner_uid: str, limit: int = 100) -> list[str]:
+    """取本账号客户名清单（注入识别提示词）。
+
+    只取**同账号**的客户 —— 客户数据是账号隔离的，跨账号取会把
+    A 账号的客户名泄漏到 B 账号的识别提示词里（既是数据泄露也是误配来源）。
+    """
+    try:
+        stmt = (
+            select(BizCustomer.name)
+            .where(BizCustomer.owner_uid == owner_uid)
+            .order_by(BizCustomer.updated_at.desc())
+            .limit(limit)
+        )
+        return [n for n in db.scalars(stmt).all() if n]
+    except Exception:  # noqa: BLE001 —— 取不到客户名不该让识别失败
+        return []
+
+
+def _customer_candidates(db, owner_uid: str) -> list[tuple[int, str]]:
+    """本账号全部客户 (id, name) —— 用于把 AI 给的客户名匹配到具体客户。
+
+    取全量（不截断）：匹配必须看全，否则同名歧义会被误判为唯一命中。
+    """
+    try:
+        stmt = select(BizCustomer.id, BizCustomer.name).where(
+            BizCustomer.owner_uid == owner_uid
+        )
+        return [(cid, name) for cid, name in db.execute(stmt).all() if name]
+    except Exception:  # noqa: BLE001 —— 取不到就不做自动关联
+        return []
+
+
+def _mark_customer_source_weekly(db, owner_uid: str, customer_ids: set[int]) -> int:
+    """给被周报关联到的客户自动填「来源=周报关联」（**只填空不覆盖**）。
+
+    优先级：客户来源是**业务判断**，人工选择永远优先。
+    只有 source 为空（用户从没选过）时才写入自动值。
+
+    返回实际更新条数。
+    """
+    from ..biz_dashboard import constants as biz_constants
+
+    if not customer_ids:
+        return 0
+    try:
+        rows = (
+            db.query(BizCustomer)
+            .filter(BizCustomer.owner_uid == owner_uid)
+            .filter(BizCustomer.id.in_(customer_ids))
+            .all()
+        )
+        changed = 0
+        for r in rows:
+            if not r.source:
+                r.source = biz_constants.CUSTOMER_SOURCE_AUTO
+                changed += 1
+        if changed:
+            db.commit()
+        return changed
+    except Exception:  # noqa: BLE001 —— 来源自动填充失败不该让识别整体失败
+        db.rollback()
+        return 0
+
+
 def _process_one(sid: int) -> None:
     db = SessionLocal()
     try:
@@ -158,8 +227,12 @@ def _process_one(sid: int) -> None:
         db.commit()
         _broadcast({"type": "progress", "screenshotId": sid, "uid": uid, "status": "processing"})
 
+        # 取本账号客户名清单注入提示词 —— 让模型在名单内「指认」客户，
+        # 而不是自由抽取（自由抽取会产出「XX科技公司」这类变体，匹配必然失败）。
+        customer_names = _customer_names(db, uid)
+
         try:
-            result = asyncio.run(recognizer.recognize(shot.stored_path))
+            result = asyncio.run(recognizer.recognize(shot.stored_path, customer_names))
         except RecognizeError as e:
             _fail_locked(db, shot, uid, str(e))
             return
@@ -206,10 +279,26 @@ def _process_one(sid: int) -> None:
         db.query(TaskItem).filter(TaskItem.screenshot_id == sid).delete()
         report_period = shot.report.period_start
         created = 0
+        # 客户候选（匹配用）。取全量以正确识别同名歧义。
+        candidates = _customer_candidates(db, uid)
+        linked_customers: set[int] = set()
         for t in result.get("tasks", []):
             raw_start = t.get("start_time") or ""
             raw_end = t.get("end_time") or ""
             extra: dict[str, Any] = {"status_raw": t.get("status") or "", "warnings": []}
+            # ---- 客户关联（周报 → 客户）----
+            # AI 给的客户名做「指认后匹配」：唯一命中才自动关联；
+            # 同名多条标 ambiguous 交人工；匹配不到标 none（**不自动建客户**）。
+            cust_raw = str(t.get("customer") or "").strip()
+            if cust_raw:
+                cm = match_customer(cust_raw, candidates)
+                extra["customer_name"] = cm.customer_name
+                extra["customer_match"] = cm.match
+                if cm.match == MATCH_MATCHED and cm.customer_id is not None:
+                    extra["customer_id"] = cm.customer_id
+                    linked_customers.add(cm.customer_id)
+                elif cm.match == "ambiguous":
+                    extra["customer_ambiguous_ids"] = list(cm.ambiguous_ids)
             if raw_start:
                 try:
                     norm = normalize_task(raw_start, raw_end, period_start=report_period)
@@ -245,6 +334,12 @@ def _process_one(sid: int) -> None:
                 )
             )
             created += 1
+
+        # ---- 反向写入：客户来源「周报关联」----
+        # 只填空、**不覆盖**：客户来源是业务判断（这客户怎么来的），
+        # 周报只提供「该客户在周报里出现过」这一弱信号，不足以推翻人工选择。
+        if linked_customers:
+            _mark_customer_source_weekly(db, uid, linked_customers)
 
         shot.recognize_status = "done"
         shot.recognize_error = ""

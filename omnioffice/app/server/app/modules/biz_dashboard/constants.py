@@ -15,6 +15,33 @@ CUSTOMER_STATUS: tuple[tuple[str, str], ...] = (
 )
 CUSTOMER_STATUS_CODES: tuple[str, ...] = tuple(c for c, _ in CUSTOMER_STATUS)
 
+# ---------------------------------------------------------------- 客户来源
+#
+# 「这个客户是怎么来的」—— 属于**业务判断**，不是系统能推导的事实。
+# 所以：① 存 code 而非中文（code 稳定，中文文案可随时改，统计按 code 走）；
+#       ② 提供 "other" + source_note 兜底（纯枚举覆盖不了真实业务，纯自由文本无法统计）；
+#       ③ "weekly"（周报关联）是**自动填充值** —— 仅在用户未手动选时、
+#          且该客户确实被周报任务关联到，才写入（自动同步只填空不覆盖）。
+#
+# 为什么"渠道推荐"与"老客户介绍"要分开：前者是外部渠道（代理商/集成商）带来的，
+# 后者是存量客户转介绍 —— 这两者的转化率与维护方式不同，合并统计会失去意义。
+CUSTOMER_SOURCES: tuple[tuple[str, str], ...] = (
+    ("referral", "老客户介绍"),
+    ("bid_win", "招标中标"),
+    ("campaign", "市场活动"),
+    ("outreach", "主动开发"),
+    ("channel", "渠道推荐"),
+    ("weekly", "周报关联"),
+    ("other", "其他"),
+)
+CUSTOMER_SOURCE_CODES: tuple[str, ...] = tuple(c for c, _ in CUSTOMER_SOURCES)
+
+# 需要补充说明的来源（前端据此决定是否显示「来源说明」输入框）
+CUSTOMER_SOURCE_NEEDS_NOTE: tuple[str, ...] = ("other",)
+
+# 自动填充来源：用户未手动选择时，由联动写入（只填空不覆盖）
+CUSTOMER_SOURCE_AUTO: str = "weekly"
+
 # ---------------------------------------------------------------- 出差状态
 
 TRIP_STATUS: tuple[tuple[str, str], ...] = (
@@ -36,6 +63,37 @@ TRANSPORT_MODES: tuple[tuple[str, str], ...] = (
     ("other", "其他"),
 )
 TRANSPORT_CODES: tuple[str, ...] = tuple(c for c, _ in TRANSPORT_MODES)
+
+# ---------------------------------------------------------------- 出差事由
+#
+# 「这次出差是去干什么」—— 与「客户」「项目」的本质差异：
+# 出差不是分类标签，而是**带时间区间与坐标的事件**，所以它独立成表，
+# 靠 customer_id 挂到客户，而不是塞进某个分类列。
+#
+# 事由分类的用途：按事由聚合出差的次数与花费（如「售前演示 12 次，差旅 3.2 万」），
+# 这是「客户」维度给不出来的另一视角。
+TRIP_REASONS: tuple[tuple[str, str], ...] = (
+    ("customer_visit", "客户拜访"),
+    ("tech_support", "技术支持"),
+    ("presale", "售前演示"),
+    ("delivery", "交付实施"),
+    ("training", "培训"),
+    ("meeting", "会议"),
+    ("other", "其他"),
+)
+TRIP_REASON_CODES: tuple[str, ...] = tuple(c for c, _ in TRIP_REASONS)
+
+# ---------------------------------------------------------------- 报销状态
+#
+# 与 cost_amount（本次直接花费）配套：cost_amount 是"花了多少"，
+# reimburse_amount 是"报销了/要报多少"，两者可能不等（自费部分、公司统一订票等）。
+REIMBURSE_STATUS: tuple[tuple[str, str], ...] = (
+    ("none", "无需报销"),
+    ("pending", "待提交"),
+    ("submitted", "已提交"),
+    ("paid", "已报销"),
+)
+REIMBURSE_STATUS_CODES: tuple[str, ...] = tuple(c for c, _ in REIMBURSE_STATUS)
 
 # ---------------------------------------------------------------- 财务
 
@@ -101,7 +159,11 @@ def capabilities() -> dict:
     """能力清单：前端下拉由此驱动，新增分类前端零改动。"""
     return {
         "customerStatus": [{"value": c, "label": l} for c, l in CUSTOMER_STATUS],
+        "customerSources": [{"value": c, "label": l} for c, l in CUSTOMER_SOURCES],
+        "customerSourceNeedsNote": list(CUSTOMER_SOURCE_NEEDS_NOTE),
         "tripStatus": [{"value": c, "label": l} for c, l in TRIP_STATUS],
+        "tripReasons": [{"value": c, "label": l} for c, l in TRIP_REASONS],
+        "reimburseStatus": [{"value": c, "label": l} for c, l in REIMBURSE_STATUS],
         "transportModes": [{"value": c, "label": l} for c, l in TRANSPORT_MODES],
         "expenseKinds": [{"value": c, "label": l} for c, l in EXPENSE_KINDS],
         "expenseCategories": list(EXPENSE_CATEGORIES),

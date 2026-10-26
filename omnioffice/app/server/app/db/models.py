@@ -247,6 +247,12 @@ class BizCustomer(Base):
     industry: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     level: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     region: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    # 客户来源（referral/bid_win/campaign/outreach/channel/weekly/other，字典见
+    # biz_dashboard.constants.CUSTOMER_SOURCES）。存 code 而非中文：code 稳定，
+    # 中文文案可随时改，统计与筛选一律按 code 走。
+    # source_note 仅当 source == "other" 时有意义（自由补充说明），其余情况留空。
+    source: Mapped[str] = mapped_column(String(32), default="", index=True, nullable=False)
+    source_note: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     note: Mapped[str] = mapped_column(Text, default="", nullable=False)
     # active（合作中）| dormant（暂停）| archived（归档）
@@ -287,6 +293,19 @@ class BizTrip(Base):
     end_date: Mapped[str] = mapped_column(String(10), default="", index=True, nullable=False)
     # 交通方式（飞机/高铁/自驾/其他）
     transport: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    # 出差事由分类（字典见 biz_dashboard.constants.TRIP_REASONS）：
+    # 与「客户」「项目」的本质差异 —— 出差不是分类标签，而是**带时间区间与坐标的事件**，
+    # 所以它独立成表（而非塞进周报任务的分类列），靠 customer_id 挂到客户。
+    reason_code: Mapped[str] = mapped_column(String(32), default="", index=True, nullable=False)
+    # 报销状态（none/pending/submitted/paid，字典见 REIMBURSE_STATUS）
+    reimburse_status: Mapped[str] = mapped_column(String(16), default="none", index=True, nullable=False)
+    # 实际报销金额（元）——与 cost_amount（本次直接花费）语义不同，故分列存储
+    reimburse_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
+    # 关联的周报任务 id 列表（反查周报「那段时间做了什么」）。
+    # 双向指针：周报侧存 extra.customer_id（谁做的），出差侧存此列（这次出差对应哪些任务）。
+    # 两者语义不同 —— 出差是「某段时间去了某客户那里」，周报是「那段时间做了什么」，
+    # 交叉查询（如「这次出差期间做了哪些工作」）才有价值。
+    report_task_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     mileage_km: Mapped[float] = mapped_column(default=0.0, nullable=False)
     cost_amount: Mapped[float] = mapped_column(default=0.0, nullable=False)
     # planned（计划中）| ongoing（进行中）| done（已完成）| cancelled（已取消）

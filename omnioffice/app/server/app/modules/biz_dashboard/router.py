@@ -65,10 +65,11 @@ def overview(
 @router.get("/customers")
 def list_customers(
     keyword: str = "",
+    source: str = "",
     db: Session = Depends(get_db),
     identity: Identity = Depends(_require_identity),
 ):
-    return {"items": _guard(service.list_customers, db, identity, keyword)}
+    return {"items": _guard(service.list_customers, db, identity, keyword, source)}
 
 
 @router.post("/customers")

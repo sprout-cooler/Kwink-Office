@@ -131,10 +131,46 @@ def _opt_int(value: Any) -> int | None:
         return None
 
 
+def _norm_customer_source(value: Any) -> str:
+    """客户来源归一化：只接受字典内的 code，其余一律当空。
+
+    不抛错的原因：来源是**辅助信息**，填错不该阻断客户建档
+    （客户名才是主数据，填错来源随时可改）。
+    """
+    code = str(value or "").strip()
+    if code in constants.CUSTOMER_SOURCE_CODES:
+        return code
+    return ""
+
+
+def _norm_id_list(value: Any) -> list[int]:
+    """任务 id 列表归一化：只保留正整数，去重且保持顺序。
+
+    出差的 reportTaskIds 存的是周报任务 id（非本模块 id），
+    所以这里只做形状校验，不做存在性校验 —— 跨模块的引用有效性
+    由写入方（周报联动）保证。
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for v in value:
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            continue
+        if i > 0 and i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
 # ------------------------------------------------------------------ 客户
 
 
-def list_customers(db: Session, identity: Identity, keyword: str = "") -> list[dict]:
+def list_customers(
+    db: Session, identity: Identity, keyword: str = "", source: str = ""
+) -> list[dict]:
     stmt = select(BizCustomer).where(BizCustomer.owner_uid == identity.uid)
     kw = (keyword or "").strip()
     if kw:
@@ -144,9 +180,31 @@ def list_customers(db: Session, identity: Identity, keyword: str = "") -> list[d
             | BizCustomer.contact.ilike(like)
             | BizCustomer.industry.ilike(like)
         )
+    src = (source or "").strip()
+    if src:
+        stmt = stmt.where(BizCustomer.source == src)
     stmt = stmt.order_by(BizCustomer.updated_at.desc())
     rows = db.scalars(stmt).all()
     return [_customer_dto(c) for c in rows]
+
+
+def list_customer_names(db: Session, owner_uid: str, limit: int = 100) -> list[str]:
+    """只取客户名（供周报 AI 识别时注入「客户名单」用）。
+
+    为什么需要它：周报识别要**指认**客户而不是自由抽取字符串 ——
+    自由抽取会产出「XX科技公司」「xx科技」这类变体，与客户表对不上。
+    限定在名单内指认，输出天然可精确匹配。
+
+    限量：客户名清单会拼进提示词，客户上千时提示词会爆炸。
+    超限时按更新时间倒序取（近期客户更可能是当前周报涉及的）。
+    """
+    stmt = (
+        select(BizCustomer.name)
+        .where(BizCustomer.owner_uid == owner_uid)
+        .order_by(BizCustomer.updated_at.desc())
+        .limit(max(1, int(limit)))
+    )
+    return [n for n in db.scalars(stmt).all() if n]
 
 
 def _customer_dto(c: BizCustomer) -> dict:
@@ -159,6 +217,8 @@ def _customer_dto(c: BizCustomer) -> dict:
         "industry": c.industry,
         "level": c.level,
         "region": c.region,
+        "source": c.source,
+        "sourceNote": c.source_note,
         "tags": c.tags or [],
         "note": c.note,
         "status": c.status,
@@ -191,6 +251,8 @@ def create_customer(db: Session, identity: Identity, body: dict) -> dict:
         industry=(body.get("industry") or "").strip(),
         level=(body.get("level") or "").strip(),
         region=(body.get("region") or "").strip(),
+        source=_norm_customer_source(body.get("source")),
+        source_note=(body.get("sourceNote") or "").strip(),
         tags=[str(t).strip() for t in (body.get("tags") or []) if str(t).strip()],
         note=(body.get("note") or "").strip(),
         status=(body.get("status") or "active").strip(),
@@ -213,6 +275,10 @@ def update_customer(db: Session, identity: Identity, cid: int, body: dict) -> di
     for field in ("contact", "phone", "address", "industry", "level", "region", "note"):
         if field in body:
             setattr(row, field, (body.get(field) or "").strip())
+    if "source" in body:
+        row.source = _norm_customer_source(body.get("source"))
+    if "sourceNote" in body:
+        row.source_note = (body.get("sourceNote") or "").strip()
     if "tags" in body:
         row.tags = [str(t).strip() for t in (body.get("tags") or []) if str(t).strip()]
     if "status" in body:
@@ -270,6 +336,10 @@ def _trip_dto(t: BizTrip, stops: list[BizTripStop] | None = None) -> dict:
         "startDate": t.start_date,
         "endDate": t.end_date,
         "transport": t.transport,
+        "reasonCode": t.reason_code,
+        "reimburseStatus": t.reimburse_status,
+        "reimburseAmount": float(t.reimburse_amount or 0),
+        "reportTaskIds": list(t.report_task_ids or []),
         "mileageKm": float(t.mileage_km or 0),
         "costAmount": float(t.cost_amount or 0),
         "status": t.status,
@@ -347,6 +417,17 @@ def _apply_trip_body(row: BizTrip, body: dict) -> None:
         row.mileage_km = float(workload.to_float(body.get("mileageKm")))
     if "costAmount" in body:
         row.cost_amount = float(_norm_amount(body.get("costAmount")))
+    if "reasonCode" in body:
+        rc = (body.get("reasonCode") or "").strip()
+        # 事由是辅助分类，填错不该阻断出差记录保存
+        row.reason_code = rc if rc in constants.TRIP_REASON_CODES else ""
+    if "reimburseStatus" in body:
+        rs = (body.get("reimburseStatus") or "").strip()
+        row.reimburse_status = rs if rs in constants.REIMBURSE_STATUS_CODES else "none"
+    if "reimburseAmount" in body:
+        row.reimburse_amount = _norm_amount(body.get("reimburseAmount"))
+    if "reportTaskIds" in body:
+        row.report_task_ids = _norm_id_list(body.get("reportTaskIds"))
     if "startDate" in body:
         row.start_date = _norm_date(body.get("startDate"), "开始日期")
     if "endDate" in body:

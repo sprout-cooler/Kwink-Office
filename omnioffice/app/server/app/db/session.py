@@ -79,6 +79,71 @@ def _wait_for_database(max_wait_s: int = 90) -> None:
     raise RuntimeError(f"database not ready after {max_wait_s}s: {last_err}")
 
 
+def _sql_literal(engine, default, col=None) -> str | None:
+    """把 ORM 列的 default 渲染成 SQL DEFAULT 字面量。
+
+    返回 None 表示「渲染不出默认值」—— 此时该列不加 DEFAULT，
+    迁移在非空表上会失败（NOT NULL 列必须带 DEFAULT），但**失败是显式的**，
+    比静默写入类型错误的默认值安全。
+
+    ⚠️ 为什么不能直接对 ``col.default.arg`` 求值（实测 SQLAlchemy 2.1.6）：
+    ``default=list`` 会被 SQLAlchemy 包装成 ``CallableColumnDefault``，其 ``arg``
+    虽保留原签名 ``(iterable=())``，实际调用却要求 ``ctx`` 参数
+    （``TypeError: list() missing 1 required positional argument: 'ctx'``），
+    且 ``get_column_default_string`` 对它返回 None。
+    所以这里**按列类型**决定默认值，而不是执行工厂：
+    - JSON 列   → 该类型的空值是 ``[]`` / ``{}``
+    - Numeric 列 → ``0``
+    - 布尔列   → ``0``
+    - 文本列   → ``''``
+    """
+    from decimal import Decimal
+
+    if default is None:
+        return None
+    arg = getattr(default, "arg", default)
+
+    # ---- 1) 标量默认值（ScalarElementColumnDefault）----
+    if not callable(arg):
+        if isinstance(arg, bool):
+            return "1" if arg else "0"
+        if isinstance(arg, Decimal):
+            # Numeric 列必须是数值字面量：写成 '' 会让该列变成字符串类型，
+            # 后续写入 Decimal 时报类型不匹配（实测已复现）。
+            return str(arg)
+        if isinstance(arg, (int, float)):
+            return str(arg)
+        if isinstance(arg, str):
+            escaped = arg.replace("'", "''")
+            return f"'{escaped}'"
+        if isinstance(arg, (list, dict)):
+            import json as _json
+
+            return f"'{_json.dumps(arg, ensure_ascii=False)}'"
+        return None
+
+    # ---- 2) 可调用默认值（CallableColumnDefault）：按列类型推断空初始值 ----
+    # 无法从工厂本身求值（见上方 docstring），改用「列类型 + 工厂名字」推断。
+    type_name = ""
+    if col is not None:
+        type_name = type(col.type).__name__.upper()
+    factory_name = getattr(arg, "__name__", "").lower()
+
+    if type_name in ("JSON",):
+        # JSON 列的 DEFAULT 必须是**合法 JSON 文本**：
+        # 写成 '' 会让 ORM 读这一行时 JSON 解析失败（实测 JSONDecodeError）。
+        if factory_name == "dict":
+            return "'{}'"
+        return "'[]'"
+    if type_name in ("NUMERIC", "INTEGER", "FLOAT", "REAL", "SMALLINT", "BIGINT"):
+        return "0"
+    if type_name == "BOOLEAN":
+        return "0"
+    if type_name in ("TEXT", "VARCHAR", "CHAR", "NVARCHAR"):
+        return "''"
+    return None
+
+
 def _migrate_add_missing_columns() -> list[str]:
     """补齐「表已存在但缺列」的情况。
 
@@ -108,7 +173,17 @@ def _migrate_add_missing_columns() -> list[str]:
                 # 直接拼进 ALTER TABLE 会报语法错 —— 迁移语句里必须用「列定义」部分。
                 # 取 col.type 的 DDL 再手工补 NOT NULL，避开表名前缀问题。
                 ddl = col.type.compile(engine.dialect)
-                ddl = f"{ddl} NOT NULL" if not col.nullable else ddl
+                if not col.nullable:
+                    ddl = f"{ddl} NOT NULL"
+                    # 必须带 DEFAULT：给已有表加 NOT NULL 列时，
+                    # SQLite 报「Cannot add a NOT NULL column with default value NULL」，
+                    # PostgreSQL 在表非空时同样拒绝无 DEFAULT 的 NOT NULL 列。
+                    # 实测（2026-10-26）两者都要求 DEFAULT，且 DEFAULT 会应用到既有行。
+                    # 不带 DEFAULT 时加列会被下面的 except 吞掉 → 老库上该字段根本不存在
+                    # → 真机启动后访问该字段直接报错（本项目 v1.0.25 的同类教训）。
+                    dflt = _sql_literal(engine, col.default, col)
+                    if dflt is not None:
+                        ddl = f"{ddl} DEFAULT {dflt}"
                 try:
                     conn.exec_driver_sql(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}")
                 except Exception as e:  # noqa: BLE001 —— 迁移失败不应阻断启动

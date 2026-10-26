@@ -25,6 +25,10 @@ const form = ref({
   startDate: "",
   endDate: "",
   transport: "",
+  reasonCode: "",
+  reimburseStatus: "none",
+  reimburseAmount: 0,
+  reportTaskIds: [] as number[],
   mileageKm: 0,
   costAmount: 0,
   status: "planned",
@@ -69,6 +73,10 @@ function openCreate() {
     startDate: "",
     endDate: "",
     transport: "",
+    reasonCode: "",
+    reimburseStatus: "none",
+    reimburseAmount: 0,
+    reportTaskIds: [],
     mileageKm: 0,
     costAmount: 0,
     status: "planned",
@@ -95,6 +103,10 @@ function openEdit(row: BizTrip) {
     startDate: row.startDate,
     endDate: row.endDate,
     transport: row.transport,
+    reasonCode: row.reasonCode ?? "",
+    reimburseStatus: row.reimburseStatus ?? "none",
+    reimburseAmount: row.reimburseAmount ?? 0,
+    reportTaskIds: [...(row.reportTaskIds ?? [])],
     mileageKm: row.mileageKm,
     costAmount: row.costAmount,
     status: row.status,
@@ -245,6 +257,10 @@ const statusLabel = (code: string) =>
   caps.value?.tripStatus.find((s) => s.value === code)?.label ?? code;
 const transportLabel = (code: string) =>
   caps.value?.transportModes.find((s) => s.value === code)?.label ?? code;
+const reasonLabel = (code: string) =>
+  caps.value?.tripReasons.find((s) => s.value === code)?.label ?? code;
+const reimburseLabel = (code: string) =>
+  caps.value?.reimburseStatus.find((s) => s.value === code)?.label ?? code;
 </script>
 
 <template>
@@ -291,6 +307,20 @@ const transportLabel = (code: string) =>
       </el-table-column>
       <el-table-column prop="mileageKm" label="里程(km)" width="100" align="right" />
       <el-table-column prop="costAmount" label="花费" width="110" align="right" />
+      <el-table-column label="事由" width="100">
+        <template #default="{ row }">
+          <span v-if="row.reasonCode">{{ reasonLabel(row.reasonCode) }}</span>
+          <span v-else class="bz-dim">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="报销" width="120">
+        <template #default="{ row }">
+          <el-tag size="small" effect="plain">{{ reimburseLabel(row.reimburseStatus) }}</el-tag>
+          <div v-if="row.reimburseAmount" class="bz-dim">
+            ¥{{ Number(row.reimburseAmount).toFixed(2) }}
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -373,6 +403,34 @@ const transportLabel = (code: string) =>
               :value="t.value"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item label="出差事由">
+          <el-select v-model="form.reasonCode" clearable placeholder="未指定" class="w-full">
+            <el-option
+              v-for="r in caps?.tripReasons ?? []"
+              :key="r.value"
+              :label="r.label"
+              :value="r.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="报销">
+          <div class="row">
+            <el-select v-model="form.reimburseStatus" class="w-full">
+              <el-option
+                v-for="s in caps?.reimburseStatus ?? []"
+                :key="s.value"
+                :label="s.label"
+                :value="s.value"
+              />
+            </el-select>
+            <el-input-number
+              v-model="form.reimburseAmount"
+              :min="0"
+              :step="100"
+              :disabled="form.reimburseStatus === 'none'"
+            />
+          </div>
         </el-form-item>
         <el-form-item label="里程/花费">
           <div class="row">

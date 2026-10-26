@@ -19,12 +19,17 @@ import {
   type TaskItemDto,
 } from "@/api/weekly-report";
 import TaskTimeField from "./TaskTimeField.vue";
+import { bizApi, type BizCustomer } from "@/api/biz-dashboard";
 
 const loading = ref(false);
 const saving = ref<number | null>(null);
 const items = ref<TaskItemDto[]>([]);
 const filterPartition = ref<PartitionId | "">("");
 const filterIssue = ref(false);
+
+/** 客户下拉数据源（周报 → 客户联动的候选）。
+ *  取不到不影响其它功能 —— 客户列退化为「仅显示」而不是报错。 */
+const customers = ref<BizCustomer[]>([]);
 
 /** 本周报周期起始日（YYYY-MM-DD），供时间字段做越界提示；取不到就不判定 */
 const periodStart = ref("");
@@ -104,6 +109,13 @@ async function refresh() {
     for (const t of r) {
       timeDraft[t.id] = { start: toEditable(t.startAt), end: toEditable(t.endAt) };
     }
+    // 客户下拉：独立加载，失败不影响主流程（周报是主功能，客户联动是增强）
+    try {
+      const c = await bizApi.listCustomers();
+      customers.value = c.items;
+    } catch {
+      customers.value = [];
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
   } finally {
@@ -174,6 +186,12 @@ async function onPartitionChange(t: TaskItemDto, p: PartitionId) {
 
 async function onCategoryChange(t: TaskItemDto, cat: string) {
   await save(t, { statCategory: cat }, `已归类为「${STAT_CATEGORY_LABELS[cat] ?? cat}」，统计已更新`);
+}
+
+/** 人工指定/清除任务关联的客户（人工值优先级最高，不会被自动识别覆盖）。 */
+async function onCustomerChange(t: TaskItemDto, cid: number | null) {
+  const name = cid == null ? "（无）" : customers.value.find((c) => c.id === cid)?.name ?? "";
+  await save(t, { customerId: cid }, `已关联客户「${name}」`);
 }
 
 async function markReviewed(t: TaskItemDto) {
@@ -484,6 +502,37 @@ async function confirmAllVisible() {
           </template>
         </el-table-column>
 
+        <el-table-column label="客户" width="190">
+          <template #default="{ row }: { row: TaskItemDto }">
+            <el-select
+              :model-value="row.customerId"
+              size="small"
+              clearable
+              placeholder="未关联"
+              @change="(v: number | null) => onCustomerChange(row, v ?? null)"
+            >
+              <el-option
+                v-for="c in customers"
+                :key="c.id"
+                :label="c.name"
+                :value="c.id"
+              />
+            </el-select>
+            <div v-if="row.customerName" class="cust-hint">
+              <template v-if="row.customerMatch === 'ambiguous'">
+                <el-tag size="small" type="warning" effect="plain">同名待选</el-tag>
+              </template>
+              <template v-else-if="row.customerMatch === 'none'">
+                <el-tag size="small" type="info" effect="plain">未建档</el-tag>
+              </template>
+              <template v-else-if="row.customerMatch === 'manual'">
+                <el-tag size="small" type="success" effect="plain">人工指定</el-tag>
+              </template>
+              <span v-else-if="row.customerName" class="cust-name">{{ row.customerName }}</span>
+            </div>
+          </template>
+        </el-table-column>
+
         <el-table-column label="归属分区" width="140">
           <template #default="{ row }: { row: TaskItemDto }">
             <el-select
@@ -518,6 +567,14 @@ async function confirmAllVisible() {
 <style scoped>
 .review-tab {
   padding-bottom: 24px;
+}
+.cust-hint {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.cust-name {
+  color: #909399;
 }
 .review-bar {
   display: flex;

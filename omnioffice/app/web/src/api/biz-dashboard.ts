@@ -14,6 +14,10 @@ export interface BizCustomer {
   industry: string;
   level: string;
   region: string;
+  /** 客户来源 code（referral/bid_win/campaign/outreach/channel/weekly/other），空=未指定 */
+  source: string;
+  /** 来源补充说明（仅 source = other 时有意义） */
+  sourceNote: string;
   tags: string[];
   note: string;
   status: string;
@@ -43,6 +47,14 @@ export interface BizTrip {
   startDate: string;
   endDate: string;
   transport: string;
+  /** 出差事由分类 code */
+  reasonCode: string;
+  /** 报销状态 code（none/pending/submitted/paid） */
+  reimburseStatus: string;
+  /** 实际报销金额 */
+  reimburseAmount: number;
+  /** 关联的周报任务 id（反查「这次出差期间做了哪些工作」） */
+  reportTaskIds: number[];
   mileageKm: number;
   costAmount: number;
   status: string;
@@ -129,7 +141,15 @@ export interface BizOverview {
 
 export interface BizCapabilities {
   customerStatus: { value: string; label: string }[];
+  /** 客户来源下拉（code + 中文标签） */
+  customerSources: { value: string; label: string }[];
+  /** 需要额外填写「来源说明」的来源 code */
+  customerSourceNeedsNote: string[];
   tripStatus: { value: string; label: string }[];
+  /** 出差事由分类下拉 */
+  tripReasons: { value: string; label: string }[];
+  /** 报销状态下拉 */
+  reimburseStatus: { value: string; label: string }[];
   transportModes: { value: string; label: string }[];
   expenseKinds: { value: string; label: string }[];
   expenseCategories: string[];
@@ -166,10 +186,13 @@ export const bizApi = {
   overview: () => api<BizOverview>("/biz-dashboard/overview"),
 
   // ---- 客户 ----
-  listCustomers: (keyword = "") =>
-    api<{ items: BizCustomer[] }>(
-      `/biz-dashboard/customers${keyword ? `?keyword=${encodeURIComponent(keyword)}` : ""}`,
-    ),
+  listCustomers: (keyword = "", source = "") => {
+    const q = new URLSearchParams();
+    if (keyword) q.set("keyword", keyword);
+    if (source) q.set("source", source);
+    const qs = q.toString();
+    return api<{ items: BizCustomer[] }>(`/biz-dashboard/customers${qs ? `?${qs}` : ""}`);
+  },
   createCustomer: (body: Partial<BizCustomer>) =>
     api<BizCustomer>("/biz-dashboard/customers", {
       method: "POST",

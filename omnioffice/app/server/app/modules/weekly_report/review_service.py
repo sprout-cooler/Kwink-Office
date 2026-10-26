@@ -65,6 +65,58 @@ def _owned_task(db: Session, identity: Identity, task_id: int) -> TaskItem:
     return t
 
 
+def _apply_manual_customer(db: Session, identity: Identity, t: TaskItem, value: Any) -> None:
+    """人工指定任务关联的客户。
+
+    规则：
+    - 传 null / 空 → **清空关联**（人工明确表示「这条不属于任何客户」）；
+    - 传 id → 必须属于**当前账号**，否则 404（不泄露客户是否存在）；
+    - 写入后 customer_match = manual —— 人工值优先级最高，
+      后续重新识别时**不会**被 AI 的自动匹配覆盖。
+
+    人工指定客户时，若该客户还没有来源，顺手填「周报关联」——
+    这与自动路径同一规则（只填空不覆盖）。
+    """
+    from ..biz_dashboard import constants as biz_constants
+    from ...db.models import BizCustomer
+
+    extra = dict(t.extra or {})
+
+    # 清空关联
+    if value in (None, "", 0, "0"):
+        extra.pop("customer_id", None)
+        extra.pop("customer_name", None)
+        extra.pop("customer_ambiguous_ids", None)
+        extra["customer_match"] = "manual"
+        t.extra = extra
+        return
+
+    try:
+        cid = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "BAD_CUSTOMER", "message": "客户参数不合法"},
+        ) from None
+
+    cust = db.get(BizCustomer, cid)
+    # 越权与不存在返回同一个错误码 —— 不区分「存在但不属于你」与「根本不存在」
+    if cust is None or cust.owner_uid != identity.uid:
+        raise HTTPException(
+            status_code=404, detail={"error": "NOT_FOUND", "message": "客户不存在"}
+        )
+
+    extra["customer_id"] = cust.id
+    extra["customer_name"] = cust.name
+    extra["customer_match"] = "manual"
+    extra.pop("customer_ambiguous_ids", None)
+    t.extra = extra
+
+    # 来源只填空不覆盖
+    if not cust.source:
+        cust.source = biz_constants.CUSTOMER_SOURCE_AUTO
+
+
 def task_dto(t: TaskItem) -> dict[str, Any]:
     """任务 DTO。前端据此渲染置信度样式、越界标记与原图对照入口。"""
     extra = t.extra or {}
@@ -98,6 +150,14 @@ def task_dto(t: TaskItem) -> dict[str, Any]:
         # 原图里 AI 抄下来的原文，用于「人工输入 vs AI 识别」对照提示
         "rawStart": extra.get("start_raw", ""),
         "rawEnd": extra.get("end_raw", ""),
+        # ---- 客户关联（周报 → 客户）----
+        # customerName 是识别时的客户名原文（保留作为识别证据，即使客户改名也不变）；
+        # customerId 是匹配到的客户 id（人工校对后可能是人工指定的）；
+        # customerMatch 说明这行是怎么来的：matched/ambiguous/none/manual。
+        "customerName": extra.get("customer_name", ""),
+        "customerId": extra.get("customer_id"),
+        "customerMatch": extra.get("customer_match", ""),
+        "customerAmbiguousIds": list(extra.get("customer_ambiguous_ids") or []),
     }
 
 
@@ -269,6 +329,10 @@ def update_task(
         extra = dict(t.extra or {})
         extra["reviewed"] = bool(patch["reviewed"])
         t.extra = extra
+
+    # 人工指定客户（人工值优先级最高，永不被自动识别覆盖）
+    if "customerId" in patch:
+        _apply_manual_customer(db, identity, t, patch.get("customerId"))
 
     db.commit()
     db.refresh(t)

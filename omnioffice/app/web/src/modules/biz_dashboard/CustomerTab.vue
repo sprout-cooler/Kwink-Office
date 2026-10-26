@@ -1,11 +1,13 @@
 <script setup lang="ts">
 /** 客户管理：客户主数据的增删改查。 */
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { bizApi, type BizCapabilities, type BizCustomer } from "@/api/biz-dashboard";
 
 const items = ref<BizCustomer[]>([]);
 const caps = ref<BizCapabilities | null>(null);
 const keyword = ref("");
+/** 按来源筛选（空=全部） */
+const filterSource = ref("");
 const loading = ref(false);
 const error = ref("");
 
@@ -19,17 +21,34 @@ const form = ref({
   industry: "",
   level: "",
   region: "",
+  source: "",
+  sourceNote: "",
   tags: [] as string[],
   note: "",
   status: "active",
 });
 const saving = ref(false);
 
+/** 「其他」来源才需要补充说明 */
+const sourceNeedsNote = computed(
+  () => caps.value?.customerSourceNeedsNote.includes(form.value.source) ?? false,
+);
+
+/** 来源 code → 中文标签（列表显示用） */
+const sourceLabels = computed(() => {
+  const m: Record<string, string> = {};
+  for (const s of caps.value?.customerSources ?? []) m[s.value] = s.label;
+  return m;
+});
+
 async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [list, c] = await Promise.all([bizApi.listCustomers(keyword.value), bizApi.capabilities()]);
+    const [list, c] = await Promise.all([
+      bizApi.listCustomers(keyword.value, filterSource.value),
+      bizApi.capabilities(),
+    ]);
     items.value = list.items;
     caps.value = c;
   } catch (e) {
@@ -50,6 +69,8 @@ function openCreate() {
     industry: "",
     level: "",
     region: "",
+    source: "",
+    sourceNote: "",
     tags: [],
     note: "",
     status: "active",
@@ -67,6 +88,8 @@ function openEdit(row: BizCustomer) {
     industry: row.industry,
     level: row.level,
     region: row.region,
+    source: row.source ?? "",
+    sourceNote: row.sourceNote ?? "",
     tags: [...(row.tags ?? [])],
     note: row.note,
     status: row.status,
@@ -124,11 +147,33 @@ const statusLabel = (code: string) =>
         @clear="load"
       />
       <el-button @click="load">搜索</el-button>
+      <el-select
+        v-model="filterSource"
+        placeholder="全部来源"
+        clearable
+        class="bz-source-filter"
+        @change="load"
+      >
+        <el-option
+          v-for="s in caps?.customerSources ?? []"
+          :key="s.value"
+          :label="s.label"
+          :value="s.value"
+        />
+      </el-select>
       <el-button type="primary" @click="openCreate">新增客户</el-button>
     </div>
 
     <el-table :data="items" size="small" v-loading="loading" empty-text="暂无客户">
       <el-table-column prop="name" label="客户名称" min-width="160" />
+      <el-table-column label="来源" width="110">
+        <template #default="{ row }">
+          <el-tag v-if="row.source" size="small" effect="plain">
+            {{ sourceLabels[row.source] ?? row.source }}
+          </el-tag>
+          <span v-else class="muted">未指定</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="industry" label="行业" width="110" />
       <el-table-column prop="contact" label="联系人" width="110" />
       <el-table-column prop="phone" label="电话" width="130" />
@@ -175,6 +220,22 @@ const statusLabel = (code: string) =>
         <el-form-item label="地址">
           <el-input v-model="form.address" />
         </el-form-item>
+        <el-form-item label="客户来源">
+          <el-select v-model="form.source" placeholder="未指定" clearable class="w-full">
+            <el-option
+              v-for="s in caps?.customerSources ?? []"
+              :key="s.value"
+              :label="s.label"
+              :value="s.value"
+            />
+          </el-select>
+          <div v-if="sourceNeedsNote" class="muted mt4">
+            选择「其他」时请补充说明，便于日后按来源统计。
+          </div>
+        </el-form-item>
+        <el-form-item v-if="sourceNeedsNote" label="来源说明">
+          <el-input v-model="form.sourceNote" placeholder="如：XX 展会现场留资" />
+        </el-form-item>
         <el-form-item label="标签">
           <el-select
             v-model="form.tags"
@@ -217,10 +278,20 @@ const statusLabel = (code: string) =>
 .bz-search {
   width: 280px;
 }
+.bz-source-filter {
+  width: 150px;
+}
 .w-full {
   width: 100%;
 }
 .mb {
   margin-bottom: 12px;
+}
+.mt4 {
+  margin-top: 4px;
+}
+.muted {
+  color: #909399;
+  font-size: 12px;
 }
 </style>
