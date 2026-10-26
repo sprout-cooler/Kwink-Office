@@ -120,14 +120,73 @@ EXPENSE_CATEGORIES: tuple[str, ...] = (
 
 SHARE_SCOPES: tuple[tuple[str, str], ...] = (
     ("expense", "财务流水"),
-    ("workload", "工作量"),
-    ("trip", "出差记录"),
+    ("customer", "客户信息"),
+    ("workload", "工作量统计"),
+    ("trip", "出差路径"),
 )
 SHARE_SCOPE_CODES: tuple[str, ...] = tuple(c for c, _ in SHARE_SCOPES)
+# 需要「显式勾选具体记录」的类别（工作量是聚合口径，无逐条 id）
+SHARE_ID_SCOPES: tuple[str, ...] = ("expense", "customer", "trip")
 
 # 分享有效期上限（天）：防止「永久有效」的分享链接长期敞口
 SHARE_MAX_DAYS = 90
 SHARE_DEFAULT_DAYS = 7
+
+# 访问口令长度范围（可选二次保护）
+SHARE_PASS_MIN_LEN = 4
+SHARE_PASS_MAX_LEN = 32
+
+# ---------------------------------------------------------------- 账单导入
+
+# 支持的支付平台。unknown 表示无法从表头识别（此时仍可按通用别名映射尝试）。
+BILL_PLATFORMS: tuple[tuple[str, str], ...] = (
+    ("alipay", "支付宝"),
+    ("wechat", "微信支付"),
+    ("unknown", "未识别平台"),
+)
+BILL_PLATFORM_CODES: tuple[str, ...] = tuple(c for c, _ in BILL_PLATFORMS)
+
+# 编码探测顺序：UTF-8 BOM 优先（有 BOM 就一定是 UTF-8），
+# 其次 UTF-8，再退回 GB18030（它是 GBK/GB2312 的超集，能解所有 GBK 文件）。
+# 注意顺序**不能反**：GB18030 几乎能解任意字节序列（包括合法 UTF-8），
+# 先试它会把 UTF-8 文件误判成 GB18030 而产出乱码。
+BILL_ENCODINGS: tuple[str, ...] = ("utf-8-sig", "utf-8", "gb18030")
+
+# 单次导入的最大行数/字节数（防止超大文件拖垮请求与内存）
+BILL_MAX_ROWS = 20000
+BILL_MAX_BYTES = 10 * 1024 * 1024
+
+# 标准字段（解析结果用的内部名）
+BILL_FIELDS: tuple[str, ...] = (
+    "txn_time",  # 交易时间
+    "txn_type",  # 交易类型
+    "counterparty",  # 交易对方
+    "amount",  # 金额
+    "direction",  # 收支方向：收入 / 支出 / 不计收支
+    "order_no",  # 订单号 / 交易号
+    "note",  # 备注 / 商品说明
+)
+
+# 表头别名 → 标准字段。
+# 为什么用别名表而不是硬编码列序：支付宝与微信的导出列数、列序、列名都不同，
+# 且同一平台不同版本导出也有差异（微信账单有的版本叫「交易时间」有的叫「交易时间」，
+# 支付宝旧版叫「交易号」新版叫「订单号」）。按列名匹配才能兼容。
+BILL_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "txn_time": ("交易时间", "交易创建时间", "时间", "日期", "交易日期", "记账日期"),
+    "txn_type": ("交易类型", "类型", "交易分类", "收/付款方式"),
+    "counterparty": ("交易对方", "对方", "商户名称", "对方户名", "付款方", "收款方", "商户"),
+    "amount": ("金额", "金额(元)", "金额（元）", "交易金额", "发生金额", "amount"),
+    "direction": ("收/支", "收支", "收/付款", "收支方向", "资金流向"),
+    "order_no": ("订单号", "交易号", "交易单号", "订单编号", "流水号", "交易订单号"),
+    "note": ("备注", "商品说明", "商品名称", "说明", "交易说明", "商品"),
+}
+
+# 平台识别依据：命中任一特征列名即判定为该平台。
+# 支付宝导出必带「交易对方」「收/支」，微信必带「收/支」且带「交易类型」+「支付方式」。
+BILL_PLATFORM_HINTS: dict[str, tuple[str, ...]] = {
+    "alipay": ("交易对方", "交易号", "收/支", "商品说明"),
+    "wechat": ("交易对方", "交易类型", "收/支", "支付方式", "当前状态"),
+}
 
 # ---------------------------------------------------------------- 限额
 
@@ -168,7 +227,14 @@ def capabilities() -> dict:
         "expenseKinds": [{"value": c, "label": l} for c, l in EXPENSE_KINDS],
         "expenseCategories": list(EXPENSE_CATEGORIES),
         "shareScopes": [{"value": c, "label": l} for c, l in SHARE_SCOPES],
+        "shareIdScopes": list(SHARE_ID_SCOPES),
         "shareMaxDays": SHARE_MAX_DAYS,
         "shareDefaultDays": SHARE_DEFAULT_DAYS,
+        "sharePassMinLen": SHARE_PASS_MIN_LEN,
+        "sharePassMaxLen": SHARE_PASS_MAX_LEN,
+        "billPlatforms": [{"value": c, "label": l} for c, l in BILL_PLATFORMS],
+        "billEncodings": list(BILL_ENCODINGS),
+        "billMaxRows": BILL_MAX_ROWS,
+        "billMaxBytes": BILL_MAX_BYTES,
         "maxPageSize": MAX_PAGE_SIZE,
     }

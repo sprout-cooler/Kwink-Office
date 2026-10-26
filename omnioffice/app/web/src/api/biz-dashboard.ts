@@ -86,6 +86,56 @@ export interface BizExpense {
   amount: number;
   occurredOn: string;
   note: string;
+  /** v1.0.32 账单导入字段：手录流水这几项全为空 */
+  platform: string;
+  orderNo: string;
+  counterparty: string;
+  txnType: string;
+  importBatchId: number | null;
+}
+
+// ---------------------------------------------------------------- 账单导入
+
+/** 账单解析出的每一行（预览用）。status: ok 可导入 / duplicate 重复 / skipped 不纳入 / failed 格式错 */
+export interface BillRow {
+  line: number;
+  status: "ok" | "duplicate" | "skipped" | "failed";
+  reason: string;
+  txnTime: string;
+  txnType: string;
+  counterparty: string;
+  amount: number | null;
+  direction: string;
+  orderNo: string;
+  note: string;
+  dedupeKey: string;
+}
+
+export interface BillPreview {
+  encoding: string;
+  platform: string;
+  headerLine: number;
+  header: string[];
+  /** 标准字段 -> 命中的表头列名 */
+  mapping: Record<string, string>;
+  summary: { total: number; ok: number; duplicate: number; skipped: number; failed: number };
+  amountTotal: number;
+  rows: BillRow[];
+  batchId?: number | null;
+  imported?: number;
+}
+
+export interface BillImportBatch {
+  id: number;
+  fileName: string;
+  platform: string;
+  encoding: string;
+  totalRows: number;
+  importedRows: number;
+  duplicateRows: number;
+  failedRows: number;
+  amountTotal: number;
+  createdAt: string;
 }
 
 export interface BizTimeEntry {
@@ -154,8 +204,16 @@ export interface BizCapabilities {
   expenseKinds: { value: string; label: string }[];
   expenseCategories: string[];
   shareScopes: { value: string; label: string }[];
+  /** 需要显式勾选记录的类别（工作量是聚合口径，不在此列） */
+  shareIdScopes: string[];
   shareMaxDays: number;
   shareDefaultDays: number;
+  sharePassMinLen: number;
+  sharePassMaxLen: number;
+  billPlatforms: { value: string; label: string }[];
+  billEncodings: string[];
+  billMaxRows: number;
+  billMaxBytes: number;
   maxPageSize: number;
 }
 
@@ -163,7 +221,11 @@ export interface BizShare {
   id: number;
   title: string;
   scopeKind: string;
+  /** v1.0.32：各类别分别包含多少条，如 { expense: 3, customer: 2, workload: 0 } */
+  scopes: Record<string, number>;
   scopeCount: number;
+  /** 是否设置了访问口令 */
+  hasPass: boolean;
   expiresAt: string;
   revoked: boolean;
   expired: boolean;
@@ -176,7 +238,9 @@ export interface ShareCreated {
   id: number;
   token: string;
   scopeKind: string;
+  scopes: Record<string, number[]>;
   scopeCount: number;
+  hasPass: boolean;
   expiresAt: string;
   title: string;
 }
@@ -258,6 +322,31 @@ export const bizApi = {
   deleteExpense: (id: number) =>
     api<{ ok: boolean }>(`/biz-dashboard/expenses/${id}`, { method: "DELETE" }),
 
+  // ---- 账单导入（v1.0.32）----
+  // 预览与正式导入都**重新上传原始文件**：后端重新解析，
+  // 不接受前端回传的解析结果（否则前端可篡改某行状态把坏数据塞进来）。
+  previewBillImport: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api<BillPreview>("/biz-dashboard/expenses/import/preview", {
+      method: "POST",
+      body: fd,
+    });
+  },
+  commitBillImport: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api<BillPreview>("/biz-dashboard/expenses/import/commit", {
+      method: "POST",
+      body: fd,
+    });
+  },
+  listBillImports: () => api<{ items: BillImportBatch[] }>("/biz-dashboard/expenses/imports"),
+  deleteBillImport: (id: number) =>
+    api<{ id: number; removed: number }>(`/biz-dashboard/expenses/imports/${id}`, {
+      method: "DELETE",
+    }),
+
   // ---- 工时台账 ----
   listTimeEntries: (customerId?: number) =>
     api<{ items: BizTimeEntry[] }>(
@@ -299,7 +388,13 @@ export const bizApi = {
 
   // ---- 分享 ----
   listShares: () => api<{ items: BizShare[] }>("/biz-dashboard/shares"),
-  createShare: (body: { scopeKind: string; scopeIds: number[]; title?: string; days?: number }) =>
+  /** v1.0.32：多类分享。scopes 里每类独立开关；workload 用空数组表示「包含工作量统计」 */
+  createShare: (body: {
+    scopes: Record<string, number[]>;
+    title?: string;
+    days?: number;
+    passcode?: string;
+  }) =>
     api<ShareCreated>("/biz-dashboard/shares", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -307,7 +402,10 @@ export const bizApi = {
     }),
   revokeShare: (id: number) =>
     api<{ ok: boolean }>(`/biz-dashboard/shares/${id}`, { method: "DELETE" }),
-  readShare: (token: string) => api<any>(`/biz-dashboard/shares/public/${token}`),
+  readShare: (token: string, passcode = "") =>
+    api<any>(
+      `/biz-dashboard/shares/public/${token}${passcode ? `?passcode=${encodeURIComponent(passcode)}` : ""}`,
+    ),
 };
 
 /** 腾讯地图 SDK 的 Key 代理地址（前端只知地址，不知 Key）。

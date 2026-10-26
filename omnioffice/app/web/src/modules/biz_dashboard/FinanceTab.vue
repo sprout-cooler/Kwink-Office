@@ -1,16 +1,23 @@
 <script setup lang="ts">
 /** 财务管理：收支流水 CRUD + 分类统计。 */
 import { computed, onMounted, ref } from "vue";
-import { bizApi, type BizCapabilities, type BizExpense } from "@/api/biz-dashboard";
+import {
+  bizApi,
+  type BillImportBatch,
+  type BizCapabilities,
+  type BizExpense,
+} from "@/api/biz-dashboard";
 import { chartColor, chartTextColor, chartTooltipBg, chartTooltipBorder, chartTooltipTextColor } from "@/composables/chart-theme";
 import {
   OOCard,
   OOEmptyState,
   OOIcon,
   OOPageHeader,
+  OOSectionTitle,
   OOStatTile,
   OOToolbar,
 } from "@/components/ui";
+import BillImportDialog from "./BillImportDialog.vue";
 import ChartBox from "./ChartBox.vue";
 
 const items = ref<BizExpense[]>([]);
@@ -18,6 +25,10 @@ const customers = ref<{ id: number; name: string }[]>([]);
 const caps = ref<BizCapabilities | null>(null);
 const loading = ref(false);
 const error = ref("");
+
+// ---- 账单导入（v1.0.32）----
+const importDialog = ref(false);
+const batches = ref<BillImportBatch[]>([]);
 
 const filterKind = ref("");
 const filterCustomer = ref<number | undefined>(undefined);
@@ -39,14 +50,16 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [list, cs, c] = await Promise.all([
+    const [list, cs, c, bs] = await Promise.all([
       bizApi.listExpenses({ kind: filterKind.value, customerId: filterCustomer.value }),
       bizApi.listCustomers(),
       bizApi.capabilities(),
+      bizApi.listBillImports(),
     ]);
     items.value = list.items;
     customers.value = cs.items.map((x) => ({ id: x.id, name: x.name }));
     caps.value = c;
+    batches.value = bs.items;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -54,6 +67,23 @@ async function load() {
   }
 }
 onMounted(load);
+
+/** 撤销整批导入：删掉该批次导入的全部流水（误导入整个文件时的兜底）。 */
+async function rollbackBatch(row: BillImportBatch) {
+  error.value = "";
+  try {
+    await bizApi.deleteBillImport(row.id);
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+const PLATFORM_LABEL: Record<string, string> = {
+  alipay: "支付宝",
+  wechat: "微信支付",
+  unknown: "未识别",
+};
 
 function openCreate() {
   editing.value = null;
@@ -168,7 +198,11 @@ const money = (n: number) =>
 
 <template>
   <div>
-    <OOPageHeader title="财务管理" description="记录日常收支流水，并按类别统计支出构成">
+    <OOPageHeader title="财务管理" description="记录日常收支流水，支持导入支付宝/微信账单，并按类别统计支出构成">
+      <el-button @click="importDialog = true">
+        <OOIcon name="upload" :size="16" style="margin-right: 6px; vertical-align: -2px" />
+        导入账单
+      </el-button>
       <el-button type="primary" @click="openCreate">
         <OOIcon name="plus" :size="16" style="margin-right: 6px; vertical-align: -2px" />
         新增流水
@@ -280,6 +314,66 @@ const money = (n: number) =>
         </OOCard>
       </div>
     </OOCard>
+
+    <OOCard
+      v-if="batches.length"
+      title="账单导入记录"
+      :subtitle="`共 ${batches.length} 次导入`"
+      flush
+      class="mb"
+    >
+      <OOToolbar hint="撤销会删除该批次导入的全部流水" dense />
+      <el-table :data="batches" size="small">
+        <el-table-column label="文件" min-width="150">
+          <template #default="{ row }">
+            <span class="oo-truncate">{{ row.fileName || "—" }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="平台" width="88">
+          <template #default="{ row }">{{ PLATFORM_LABEL[row.platform] ?? row.platform }}</template>
+        </el-table-column>
+        <el-table-column prop="encoding" label="编码" width="88" />
+        <el-table-column label="导入" width="76" align="right">
+          <template #default="{ row }"><span class="oo-num">{{ row.importedRows }}</span></template>
+        </el-table-column>
+        <el-table-column label="重复" width="76" align="right">
+          <template #default="{ row }"><span class="oo-num">{{ row.duplicateRows }}</span></template>
+        </el-table-column>
+        <el-table-column label="失败" width="76" align="right">
+          <template #default="{ row }">
+            <span class="oo-num" :class="{ 'oo-text-danger': row.failedRows > 0 }">
+              {{ row.failedRows }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="金额" width="110" align="right">
+          <template #default="{ row }">
+            <span class="oo-num">{{ money(row.amountTotal) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="时间" width="150">
+          <template #default="{ row }">
+            <span class="oo-num oo-text-xs oo-text-secondary">
+              {{ row.createdAt ? new Date(row.createdAt).toLocaleString("zh-CN") : "—" }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" align="center">
+          <template #default="{ row }">
+            <el-popconfirm
+              title="撤销该批次导入？该批次导入的流水会被一并删除"
+              @confirm="rollbackBatch(row)"
+            >
+              <template #reference>
+                <el-button link type="danger" size="small">撤销</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+    </OOCard>
+
+    <BillImportDialog v-model="importDialog" @imported="load" />
 
     <el-dialog v-model="dialog" width="560px" align-center>
       <template #header>

@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from ...core.identity import Identity, get_identity
@@ -188,6 +188,53 @@ def delete_expense(
     return _guard(service.delete_expense, db, identity, eid)
 
 
+# ------------------------------------------------------------------ 账单导入
+#
+# 两个接口都收**原始文件**：预览与正式导入必须解析同一份字节，
+# 若前端把预览结果回传再让后端导入，就存在「预览被篡改」的空间
+# （比如把某行的状态改成 ok）。所以 commit 也重新上传文件、重新解析。
+
+
+@router.post("/expenses/import/preview")
+async def preview_bill_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """解析账单并给出预览（**不写库**），供用户确认后再导入。"""
+    raw = await file.read()
+    return _guard(service.preview_bill_import, db, identity, raw, file.filename or "")
+
+
+@router.post("/expenses/import/commit")
+async def commit_bill_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """正式导入：重新解析 + 去重 + 写库 + 记录批次。"""
+    raw = await file.read()
+    return _guard(service.commit_bill_import, db, identity, raw, file.filename or "")
+
+
+@router.get("/expenses/imports")
+def list_bill_imports(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    return {"items": _guard(service.list_bill_imports, db, identity)}
+
+
+@router.delete("/expenses/imports/{bid}")
+def delete_bill_import(
+    bid: int,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """撤销整批导入：删掉该批次导入的全部流水。"""
+    return _guard(service.delete_bill_import, db, identity, bid)
+
+
 # ------------------------------------------------------------------ 工时台账
 
 
@@ -326,11 +373,15 @@ def revoke_share(
 @router.get("/shares/public/{token}")
 def read_share(
     token: str,
+    passcode: str = Query(default=""),
     db: Session = Depends(get_db),
 ):
-    """按令牌读取分享内容。
+    """按令牌读取分享内容（可含多类数据，可能要求访问口令）。
 
     ⚠️ 本接口**不要求登录** —— 接收者可能不是本 NAS 用户。
-    只能读到创建者显式勾选的记录，且受有效期与撤销状态约束。
+    只能读到创建者显式勾选的记录，且受有效期、撤销状态与可选口令约束。
+
+    passcode 用 query 而不是 header/body，是为了让接收者可以**直接在浏览器地址栏
+    带参数打开**（分享者发 `...?passcode=xxxx` 即可），不需要额外的输入界面。
     """
-    return _guard(service.read_share, db, token)
+    return _guard(service.read_share, db, token, passcode)

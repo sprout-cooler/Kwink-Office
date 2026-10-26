@@ -124,5 +124,14 @@
     "fpk": "omnioffice_1.0.31_all_20261026.fpk",
     "commit": null,
     "note": "UI 重构：ColorOS 风格设计体系 + 17 页面落地 + 742 节点对比度零未达标"
+  },
+  {
+    "ts": "2026-10-26T16:44:04.672Z",
+    "appname": "omnioffice",
+    "version": "1.0.32",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.32_all_20261026.fpk",
+    "commit": null,
+    "note": "账单导入（支付宝/微信 CSV + 编码探测 + 去重）+ 选择性分享扩展（四类多选 + 访问口令）"
   }
 ]

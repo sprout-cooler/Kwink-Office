@@ -146,3 +146,81 @@ def share_expired() -> BizDashboardError:
         "分享链接已过期。请向分享者索取新的链接",
         410,
     )
+
+
+def share_pass_required() -> BizDashboardError:
+    """分享设置了访问口令，请求未带口令。
+
+    与「口令错误」分开：没带口令时提示「需要口令」，带了但错时提示「口令不正确」，
+    接收者据此知道下一步是「问分享者要口令」还是「核对口令」。
+    """
+    return BizDashboardError(
+        "SHARE_PASS_REQUIRED",
+        "该分享设置了访问口令，请输入分享者给你的口令后重试",
+        401,
+    )
+
+
+def share_pass_invalid() -> BizDashboardError:
+    return BizDashboardError(
+        "SHARE_PASS_INVALID",
+        "访问口令不正确，请核对后重试（可向分享者确认）",
+        401,
+    )
+
+
+# ---------------------------------------------------------------- 账单导入
+
+
+def bill_empty() -> BizDashboardError:
+    return BizDashboardError(
+        "BILL_EMPTY",
+        "文件里没有可解析的数据行。请确认导出的是账单明细 CSV（不是空文件或仅含说明文字的封面行）",
+        400,
+    )
+
+
+def bill_too_large(rows: int, limit: int) -> BizDashboardError:
+    return BizDashboardError(
+        "BILL_TOO_LARGE",
+        f"账单行数过多（{rows} 行，上限 {limit} 行）。"
+        "请在支付平台按月份分批导出后再导入，避免一次处理过久",
+        413,
+        rows=rows,
+        limit=limit,
+    )
+
+
+def bill_too_big(size: int, limit: int) -> BizDashboardError:
+    return BizDashboardError(
+        "BILL_TOO_BIG",
+        f"文件过大（{round(size / 1024 / 1024, 1)} MB，上限 {round(limit / 1024 / 1024, 1)} MB）。"
+        "请缩短导出时间范围后重新导出",
+        413,
+        size=size,
+        limit=limit,
+    )
+
+
+def bill_unreadable() -> BizDashboardError:
+    """常见编码都解不开 —— 多数情况不是 CSV，或文件已损坏。"""
+    return BizDashboardError(
+        "BILL_UNREADABLE",
+        "无法识别文件编码（已尝试 UTF-8 与 GBK/GB18030）。"
+        "请确认上传的是**文本格式的 CSV 文件**；若从 Excel 另存，请选择「CSV UTF-8（逗号分隔）」格式",
+        400,
+    )
+
+
+def bill_no_header() -> BizDashboardError:
+    """表头里一个可识别的列都没有。
+
+    支付宝/微信账单导出常带若干行说明（如「支付宝交易明细」「导出时间：…」），
+    真正的表头在中间。这里已做多行探测仍失败，说明确实不是账单文件。
+    """
+    return BizDashboardError(
+        "BILL_NO_HEADER",
+        "未能识别账单表头（未找到交易时间、金额、交易对方等任何一列）。"
+        "请使用支付平台**官方导出的原始账单文件**，不要自行编辑或另存为 Excel 表格",
+        400,
+    )

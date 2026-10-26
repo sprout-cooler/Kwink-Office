@@ -22,13 +22,14 @@ from ...core.identity import Identity
 from ...db.models import (
     BizCustomer,
     BizExpense,
+    BizExpenseImport,
     BizShare,
     BizTimeEntry,
     BizTrip,
     BizTripStop,
     TaskItem,
 )
-from . import constants, geo, workload
+from . import bill_import, constants, geo, workload
 from .errors import (
     BizDashboardError,
     bad_amount,
@@ -40,6 +41,8 @@ from .errors import (
     share_empty_scope,
     share_expired,
     share_invalid,
+    share_pass_invalid,
+    share_pass_required,
 )
 
 _CN_TZ = timezone(timedelta(hours=8))
@@ -528,6 +531,12 @@ def _expense_dto(e: BizExpense) -> dict:
         "amount": float(e.amount or 0),
         "occurredOn": e.occurred_on,
         "note": e.note,
+        # v1.0.32 账单导入字段（手录流水为空）
+        "platform": e.platform or "",
+        "orderNo": e.order_no or "",
+        "counterparty": e.counterparty or "",
+        "txnType": e.txn_type or "",
+        "importBatchId": e.import_batch_id,
     }
 
 
@@ -869,63 +878,143 @@ def create_share(
 
     明文 token **只在此处返回一次**，库里只存 sha256 哈希。
     """
-    scope_kind = (body.get("scopeKind") or "expense").strip()
-    if scope_kind not in constants.SHARE_SCOPE_CODES:
-        raise bad_param("scopeKind", f"不支持的分享类别：{scope_kind}")
-    raw_ids = body.get("scopeIds") or []
-    ids: list[int] = []
-    for v in raw_ids:
-        iv = _opt_int(v)
-        if iv is not None and iv not in ids:
-            ids.append(iv)
-    if not ids:
-        raise share_empty_scope()
-
-    # 校验被勾选的记录确实属于本人（防止借分享接口探测他人记录是否存在）
-    if scope_kind == "expense":
-        owned = db.scalars(
-            select(BizExpense.id).where(
-                BizExpense.owner_uid == identity.uid, BizExpense.id.in_(ids)
-            )
-        ).all()
-    elif scope_kind == "trip":
-        owned = db.scalars(
-            select(BizTrip.id).where(
-                BizTrip.owner_uid == identity.uid, BizTrip.id.in_(ids)
-            )
-        ).all()
-    else:
-        owned = ids  # workload 分享按聚合口径，无需逐条校验
-    valid_ids = list(owned)
-    if not valid_ids:
-        raise share_empty_scope()
+    scopes, primary_kind = _resolve_scopes(db, identity, body)
+    # 旧字段仍写一份（兼容已发出的旧链接与老前端）
+    valid_ids = scopes.get(primary_kind) or []
 
     days = _opt_int(body.get("days")) or constants.SHARE_DEFAULT_DAYS
     if days < 1 or days > constants.SHARE_MAX_DAYS:
         raise bad_param("days", f"有效期需在 1 ~ {constants.SHARE_MAX_DAYS} 天之间")
+
+    # 可选访问口令：设了之后「拿到链接」还不够，还必须输入口令。
+    # 只存哈希（与 token 同策略），明文不落库。
+    passcode = (body.get("passcode") or "").strip()
+    pass_hash = ""
+    if passcode:
+        if not (constants.SHARE_PASS_MIN_LEN <= len(passcode) <= constants.SHARE_PASS_MAX_LEN):
+            raise bad_param(
+                "passcode",
+                f"访问口令长度需在 {constants.SHARE_PASS_MIN_LEN} ~ {constants.SHARE_PASS_MAX_LEN} 个字符之间",
+            )
+        pass_hash = geo.token_hash(passcode)
 
     token = secrets.token_urlsafe(24)
     row = BizShare(
         owner_uid=identity.uid,
         title=(body.get("title") or "").strip(),
         token_hash=geo.token_hash(token),
+        # v1.0.32 多类范围为实际生效字段
+        scopes=scopes,
+        pass_hash=pass_hash,
+        # 旧字段同步写一份：保证 v1.0.31 及更早创建的链接仍能被读取
         scope_ids=valid_ids,
-        scope_kind=scope_kind,
+        scope_kind=primary_kind,
         expires_at=_now() + timedelta(days=days),
     )
     db.add(row)
     db.commit()
     db.refresh(row)
-    geo.audit_share(identity.uid, "create", {"scopeKind": scope_kind, "count": len(valid_ids)})
+    geo.audit_share(
+        identity.uid,
+        "create",
+        {"scopes": {k: len(v) for k, v in scopes.items()}, "hasPass": bool(pass_hash)},
+    )
     expires = _as_utc(row.expires_at)
     return {
         "id": row.id,
         "token": token,  # 仅此一次
-        "scopeKind": scope_kind,
-        "scopeCount": len(valid_ids),
+        "scopes": scopes,
+        "scopeKind": primary_kind,
+        "scopeCount": sum(len(v) for v in scopes.values()),
+        "hasPass": bool(pass_hash),
         "expiresAt": expires.isoformat() if expires else "",
         "title": row.title,
     }
+
+
+def _resolve_scopes(db: Session, identity: Identity, body: dict) -> tuple[dict[str, list[int]], str]:
+    """解析并校验分享范围（v1.0.32 多类）。
+
+    支持两类入参：
+    - 新：`scopes = {"expense": [1,2], "customer": [3], "workload": [], "trip": [7]}`
+    - 旧：`scopeKind` + `scopeIds`（v1.0.31 及更早），自动转成新结构
+
+    返回 (已校验的 scopes, 主类别)。主类别只用于填旧字段 scope_kind。
+
+    ⚠️ 每一类都**逐条校验归属**：不校验的话，攻击者可以拿别人的记录 id 建分享，
+    借这个免登录接口把别人的数据读出去。
+    """
+    raw = body.get("scopes")
+    wanted: dict[str, list[int]] = {}
+
+    if isinstance(raw, dict) and raw:
+        for kind in constants.SHARE_SCOPE_CODES:
+            if kind not in raw:
+                continue
+            if kind == "workload":
+                wanted[kind] = []  # 聚合口径，键存在即表示包含
+                continue
+            if kind not in constants.SHARE_ID_SCOPES:
+                continue
+            ids: list[int] = []
+            for v in raw.get(kind) or []:
+                iv = _opt_int(v)
+                if iv is not None and iv not in ids:
+                    ids.append(iv)
+            if ids:
+                wanted[kind] = ids
+    else:
+        kind = (body.get("scopeKind") or "expense").strip()
+        if kind not in constants.SHARE_SCOPE_CODES:
+            raise bad_param("scopeKind", f"不支持的分享类别：{kind}")
+        ids2: list[int] = []
+        for v in body.get("scopeIds") or []:
+            iv = _opt_int(v)
+            if iv is not None and iv not in ids2:
+                ids2.append(iv)
+        if kind == "workload":
+            wanted[kind] = []
+        elif ids2:
+            wanted[kind] = ids2
+
+    if not wanted:
+        raise share_empty_scope()
+
+    valid: dict[str, list[int]] = {}
+    for kind, ids in wanted.items():
+        if kind == "expense":
+            owned = db.scalars(
+                select(BizExpense.id).where(
+                    BizExpense.owner_uid == identity.uid, BizExpense.id.in_(ids)
+                )
+            ).all()
+            if list(owned):
+                valid[kind] = list(owned)
+        elif kind == "customer":
+            owned = db.scalars(
+                select(BizCustomer.id).where(
+                    BizCustomer.owner_uid == identity.uid, BizCustomer.id.in_(ids)
+                )
+            ).all()
+            if list(owned):
+                valid[kind] = list(owned)
+        elif kind == "trip":
+            owned = db.scalars(
+                select(BizTrip.id).where(
+                    BizTrip.owner_uid == identity.uid, BizTrip.id.in_(ids)
+                )
+            ).all()
+            if list(owned):
+                valid[kind] = list(owned)
+        else:  # workload：聚合口径，无需逐条校验
+            valid[kind] = []
+
+    if not valid:
+        raise share_empty_scope()
+
+    # 主类别：按常量声明顺序取第一个，保证旧字段稳定可预期
+    primary = next((k for k in constants.SHARE_SCOPE_CODES if k in valid), "expense")
+    return valid, primary
 
 
 def list_shares(db: Session, identity: Identity) -> list[dict]:
@@ -939,12 +1028,15 @@ def list_shares(db: Session, identity: Identity) -> list[dict]:
     for s in rows:
         expires = _as_utc(s.expires_at)
         expired = expires is not None and expires < now
+        scopes = _scopes_of(s)
         out.append(
             {
                 "id": s.id,
                 "title": s.title,
                 "scopeKind": s.scope_kind,
-                "scopeCount": len(s.scope_ids or []),
+                "scopes": {k: len(v) for k, v in scopes.items()},
+                "scopeCount": sum(len(v) for v in scopes.values()),
+                "hasPass": bool(s.pass_hash),
                 "expiresAt": expires.isoformat() if expires else "",
                 "revoked": bool(s.revoked),
                 "expired": expired,
@@ -954,6 +1046,22 @@ def list_shares(db: Session, identity: Identity) -> list[dict]:
             }
         )
     return out
+
+
+def _scopes_of(row: BizShare) -> dict[str, list[int]]:
+    """取分享范围，旧数据自动回落到 scope_kind + scope_ids。
+
+    v1.0.31 及更早创建的分享只有单类字段；这里统一成多类结构返回，
+    前端不必区分新旧。
+    """
+    raw = row.scopes
+    if isinstance(raw, dict) and raw:
+        return {k: [int(i) for i in (v or [])] for k, v in raw.items()}
+    if row.scope_kind:
+        ids = [int(i) for i in (row.scope_ids or [])]
+        if row.scope_kind == "workload" or ids:
+            return {row.scope_kind: ids}
+    return {}
 
 
 def revoke_share(db: Session, identity: Identity, sid: int) -> dict:
@@ -968,8 +1076,27 @@ def revoke_share(db: Session, identity: Identity, sid: int) -> dict:
     return {"ok": True, "id": sid}
 
 
-def read_share(db: Session, token: str) -> dict:
-    """按令牌读取分享内容。
+def _customer_share_dto(c: BizCustomer) -> dict:
+    """客户信息的**对外分享**视图（v1.0.32）。
+
+    刻意**不含**联系人、电话、地址、备注 —— 这些是客户资料里敏感度最高的部分，
+    而「分享客户信息」的典型场景是给合作方做对账/报备，并不需要联系方式。
+    真要外发联系方式，应当走导出文件而不是长期有效的分享链接。
+    """
+    return {
+        "id": c.id,
+        "name": c.name,
+        "industry": c.industry,
+        "region": c.region,
+        "level": c.level,
+        "status": c.status,
+        "source": c.source,
+        "tags": c.tags or [],
+    }
+
+
+def read_share(db: Session, token: str, passcode: str = "") -> dict:
+    """按令牌读取分享内容（v1.0.32：多类 + 可选口令）。
 
     ⚠️ 本接口**不要求应用账号登录** —— 分享链接的接收者可能不是本 NAS 的用户。
     这是唯一不按 owner_uid 过滤的读接口，但它只能读到**创建者显式勾选**的记录，
@@ -990,26 +1117,297 @@ def read_share(db: Session, token: str) -> dict:
     if expires is not None and expires < _now():
         raise share_expired()
 
-    ids = [int(i) for i in (row.scope_ids or [])]
+    # 口令校验**必须排在访问计数之前**：输错口令不该被记成一次有效访问，
+    # 否则有人反复试口令会把 view_count 刷得毫无意义。
+    if row.pass_hash:
+        pc = (passcode or "").strip()
+        if not pc:
+            raise share_pass_required()
+        if geo.token_hash(pc) != row.pass_hash:
+            raise share_pass_invalid()
+
+    scopes = _scopes_of(row)
     payload: dict[str, Any] = {
         "title": row.title,
-        "scopeKind": row.scope_kind,
         "expiresAt": expires.isoformat() if expires else "",
         "owner": "分享方",  # 不泄露分享者身份
+        "hasPass": bool(row.pass_hash),
+        "sections": {},
     }
+    # 兼容 v1.0.31 及更早的前端：旧字段照旧给出
+    payload["scopeKind"] = row.scope_kind
+    payload["records"] = []
+    payload["total"] = 0
 
-    if row.scope_kind == "expense":
+    if "expense" in scopes:
+        ids = scopes["expense"]
         rows = db.scalars(select(BizExpense).where(BizExpense.id.in_(ids))).all()
-        payload["records"] = [_expense_dto(e) for e in rows]
-        payload["total"] = round(sum(float(e.amount or 0) for e in rows), 2)
-    elif row.scope_kind == "trip":
+        items = [_expense_dto(e) for e in rows]
+        payload["sections"]["expense"] = {
+            "label": "财务流水",
+            "count": len(items),
+            "total": round(sum(float(x["amount"] or 0) for x in items), 2),
+            "items": items,
+        }
+        payload["records"] = items
+        payload["total"] = payload["sections"]["expense"]["total"]
+
+    if "customer" in scopes:
+        ids = scopes["customer"]
+        rows = db.scalars(select(BizCustomer).where(BizCustomer.id.in_(ids))).all()
+        items = [_customer_share_dto(c) for c in rows]
+        payload["sections"]["customer"] = {
+            "label": "客户信息",
+            "count": len(items),
+            "items": items,
+        }
+
+    if "trip" in scopes:
+        ids = scopes["trip"]
         rows = db.scalars(select(BizTrip).where(BizTrip.id.in_(ids))).all()
-        payload["records"] = [_trip_dto(t) for t in rows]
-    else:
-        payload["records"] = []
+        items = [_trip_dto(t) for t in rows]
+        payload["sections"]["trip"] = {
+            "label": "出差路径",
+            "count": len(items),
+            "items": items,
+        }
+
+    if "workload" in scopes:
+        # 工作量是**聚合口径**（没有逐条记录 id），用分享者的 uid 现算一次。
+        # 这里构造内部 Identity 只是为了复用既有的按人聚合逻辑，
+        # 返回内容只含工时数字与客户名，不含 owner_uid。
+        owner_identity = Identity(uid=row.owner_uid, username="", is_admin=False)
+        overview = workload_overview(db, owner_identity, "month")
+        payload["sections"]["workload"] = {
+            "label": "工作量统计",
+            "count": overview.get("entryCount", 0),
+            "totalHours": overview.get("totalHours", 0),
+            "weeklyHours": overview.get("weeklyHours", 0),
+            "manualHours": overview.get("manualHours", 0),
+            "items": overview.get("buckets", []),
+            "byCustomer": overview.get("byCustomer", []),
+        }
 
     # 访问计数（察觉异常传播）
     row.view_count = (row.view_count or 0) + 1
     row.last_viewed_at = _now()
     db.commit()
     return payload
+
+
+# ================================================================ 账单导入（v1.0.32）
+
+
+def _chunked(seq: list, size: int = 400):
+    """分批：SQLite 的 SQL 变量数有上限（默认 999），订单号 IN 查询必须切片。"""
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+def _existing_dedupe_keys(
+    db: Session, identity: Identity, platform: str, rows: list
+) -> set[str]:
+    """查出库里已存在的去重键集合。
+
+    为什么一次查一批而不是逐行查：账单动辄上千行，逐行查询会产生上千条 SQL，
+    在 NAS 的 SQLite 上要跑几十秒。这里最多两次批量查询搞定。
+
+    比对口径刻意**保守**（宁可多判重也不要漏判）：
+    - 新行有订单号 -> 与库内同平台同订单号比对；
+    - 新行无订单号 -> 与库内同日期同金额同交易对方比对（不看库内有没有订单号），
+      因为时间+金额+对方三者一致时，几乎必然是同一笔，漏判会导致重复记账。
+    """
+    keys: set[str] = set()
+
+    order_nos = sorted({(r.order_no or "").strip() for r in rows if (r.order_no or "").strip()})
+    for chunk in _chunked(order_nos):
+        have = db.scalars(
+            select(BizExpense.order_no).where(
+                BizExpense.owner_uid == identity.uid,
+                BizExpense.platform == platform,
+                BizExpense.order_no.in_(chunk),
+            )
+        ).all()
+        keys.update(f"{platform}:{o}" for o in have if o)
+
+    no_order = [r for r in rows if not (r.order_no or "").strip()]
+    if no_order:
+        dates = [r.txn_time for r in no_order if r.txn_time]
+        if dates:
+            lo, hi = min(dates), max(dates)
+            existing = db.scalars(
+                select(BizExpense).where(
+                    BizExpense.owner_uid == identity.uid,
+                    BizExpense.platform == platform,
+                    BizExpense.occurred_on >= lo,
+                    BizExpense.occurred_on <= hi,
+                )
+            ).all()
+            for e in existing:
+                amount = Decimal(str(e.amount or 0))
+                keys.add(
+                    bill_import.build_dedupe_key(
+                        platform, "", e.occurred_on or "", amount, e.counterparty or ""
+                    )
+                )
+                if (e.order_no or "").strip():
+                    keys.add(f"{platform}:{e.order_no.strip()}")
+    return keys
+
+
+def _apply_duplicates(rows: list, db_keys: set[str]) -> None:
+    """就地标记重复行。
+
+    同时处理两种重复：与库内历史重复、以及在**本次文件内**前面已出现过的行
+    （有些平台一次导出会带多行同一订单号，如分笔支付）。
+    """
+    seen: set[str] = set()
+    for r in rows:
+        if r.status != bill_import.STATUS_OK:
+            continue
+        if not r.dedupe_key:
+            continue
+        if r.dedupe_key in db_keys:
+            r.status = bill_import.STATUS_DUPLICATE
+            r.reason = "与已导入的历史记录重复，已跳过"
+        elif r.dedupe_key in seen:
+            r.status = bill_import.STATUS_DUPLICATE
+            r.reason = "与本次文件中前面的某行重复，已跳过"
+        else:
+            seen.add(r.dedupe_key)
+
+
+def _bill_preview_payload(result, rows: list) -> dict:
+    summary = {
+        "total": len(rows),
+        "ok": sum(1 for r in rows if r.status == bill_import.STATUS_OK),
+        "duplicate": sum(1 for r in rows if r.status == bill_import.STATUS_DUPLICATE),
+        "skipped": sum(1 for r in rows if r.status == bill_import.STATUS_SKIPPED),
+        "failed": sum(1 for r in rows if r.status == bill_import.STATUS_FAILED),
+    }
+    ok_rows = [r for r in rows if r.status == bill_import.STATUS_OK]
+    return {
+        "encoding": result.encoding,
+        "platform": result.platform,
+        "headerLine": result.header_line,
+        "header": result.header_cells,
+        "mapping": {k: (result.header_cells[v] if v < len(result.header_cells) else "") for k, v in result.mapping.items()},
+        "summary": summary,
+        "amountTotal": round(sum(float(r.amount or 0) for r in ok_rows), 2),
+        "rows": [r.to_dto() for r in rows],
+    }
+
+
+def preview_bill_import(db: Session, identity: Identity, raw: bytes, file_name: str) -> dict:
+    """解析账单并给出**预览**（不写库）。
+
+    预览必须和正式导入走**同一套去重判定**，否则会出现「预览说能导入 100 条，
+    提交后只进了 80 条」的信任崩塌。
+    """
+    result = bill_import.parse_bill(raw, file_name)
+    db_keys = _existing_dedupe_keys(db, identity, result.platform, result.rows)
+    _apply_duplicates(result.rows, db_keys)
+    return _bill_preview_payload(result, result.rows)
+
+
+def commit_bill_import(db: Session, identity: Identity, raw: bytes, file_name: str) -> dict:
+    """解析 + 去重 + 写库 + 记录批次。
+
+    重新解析一遍而不复用预览结果：用户可能在预览之后隔了很久才点导入，
+    期间库内数据已变，复用旧判定会导入重复数据。
+    """
+    result = bill_import.parse_bill(raw, file_name)
+    db_keys = _existing_dedupe_keys(db, identity, result.platform, result.rows)
+    _apply_duplicates(result.rows, db_keys)
+
+    ok_rows = [r for r in result.rows if r.status == bill_import.STATUS_OK]
+    if not ok_rows:
+        # 一条都导不进去时也要留下批次记录，用户在历史里能看到「为什么没导进来」
+        payload = _bill_preview_payload(result, result.rows)
+        payload["batchId"] = None
+        payload["imported"] = 0
+        return payload
+
+    batch = BizExpenseImport(
+        owner_uid=identity.uid,
+        file_name=(file_name or "")[:255],
+        platform=result.platform,
+        encoding=result.encoding,
+        total_rows=len(result.rows),
+        imported_rows=len(ok_rows),
+        duplicate_rows=sum(1 for r in result.rows if r.status == bill_import.STATUS_DUPLICATE),
+        failed_rows=sum(1 for r in result.rows if r.status == bill_import.STATUS_FAILED),
+        amount_total=Decimal(str(round(sum(float(r.amount or 0) for r in ok_rows), 2))),
+    )
+    db.add(batch)
+    db.flush()  # 拿到 batch.id 供明细行引用
+
+    for r in ok_rows:
+        note_parts = [p for p in (r.note, r.raw.get("note") or "") if p]
+        db.add(
+            BizExpense(
+                owner_uid=identity.uid,
+                kind=r.direction,
+                # 账单的「交易分类」直接当财务类别用：这样导入的数据能立刻
+                # 落在现有财务图表（按类别分组）里，而不是全堆进「未分类」。
+                category=(r.txn_type or "账单导入")[:64],
+                amount=r.amount,
+                occurred_on=r.txn_time,
+                note=" / ".join(dict.fromkeys(note_parts))[:500],
+                platform=result.platform,
+                order_no=(r.order_no or "")[:64],
+                counterparty=(r.counterparty or "")[:128],
+                txn_type=(r.txn_type or "")[:64],
+                import_batch_id=batch.id,
+            )
+        )
+    db.commit()
+    db.refresh(batch)
+
+    payload = _bill_preview_payload(result, result.rows)
+    payload["batchId"] = batch.id
+    payload["imported"] = len(ok_rows)
+    return payload
+
+
+def list_bill_imports(db: Session, identity: Identity) -> list[dict]:
+    rows = db.scalars(
+        select(BizExpenseImport)
+        .where(BizExpenseImport.owner_uid == identity.uid)
+        .order_by(BizExpenseImport.created_at.desc())
+    ).all()
+    return [
+        {
+            "id": b.id,
+            "fileName": b.file_name,
+            "platform": b.platform,
+            "encoding": b.encoding,
+            "totalRows": b.total_rows,
+            "importedRows": b.imported_rows,
+            "duplicateRows": b.duplicate_rows,
+            "failedRows": b.failed_rows,
+            "amountTotal": float(b.amount_total or 0),
+            "createdAt": b.created_at.isoformat() if b.created_at else "",
+        }
+        for b in rows
+    ]
+
+
+def delete_bill_import(db: Session, identity: Identity, batch_id: int) -> dict:
+    """按批次撤销导入：删掉该批次导入的全部流水 + 批次记录本身。
+
+    误导入整个文件时不能让用户去逐条删。
+    """
+    batch = db.scalar(
+        select(BizExpenseImport).where(
+            BizExpenseImport.id == batch_id, BizExpenseImport.owner_uid == identity.uid
+        )
+    )
+    if batch is None:
+        raise not_found("导入批次", batch_id)
+    removed = db.query(BizExpense).filter(
+        BizExpense.owner_uid == identity.uid, BizExpense.import_batch_id == batch_id
+    ).delete(synchronize_session=False)
+    db.delete(batch)
+    db.commit()
+    return {"id": batch_id, "removed": removed}

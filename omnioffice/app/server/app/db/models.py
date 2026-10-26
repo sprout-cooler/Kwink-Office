@@ -369,6 +369,54 @@ class BizExpense(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
+    # ---- v1.0.32 账单导入：以下 5 列由「支付平台账单导入」写入 ----
+    # 手录流水这 5 列全为空，因此**全部可空**，且必须带 default ——
+    # _migrate_add_missing_columns 给既有表加 NOT NULL 列时，SQLite 报
+    # 「Cannot add a NOT NULL column with default value NULL」、PostgreSQL 同样拒绝，
+    # 不带 DEFAULT 的加列会被 except 吞掉 → 真机上字段根本不存在（v1.0.25 同类教训）。
+    # 来源平台：alipay / wechat / manual / other（见 constants.BILL_PLATFORMS）
+    platform: Mapped[str] = mapped_column(String(16), default="", index=True, nullable=False)
+    # 平台订单号（交易号）。去重的第一判据，可为空（部分平台不导出）
+    order_no: Mapped[str] = mapped_column(String(64), default="", index=True, nullable=False)
+    # 交易对方（商户名 / 付款方）
+    counterparty: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    # 平台原始的交易类型（如「商户消费」「转账」「退款」），保留原样便于对账
+    txn_type: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    # 所属导入批次（BizExpenseImport.id）。空 = 手工录入
+    import_batch_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+
+class BizExpenseImport(Base):
+    """账单导入批次（v1.0.32）。
+
+    为什么单独建表而不是只在 biz_expenses 上打标：
+    - **可回溯**：用户几天后问「这笔哪来的」，要能查到文件名、平台、编码、导入时间；
+    - **可解释**：导入失败/被去重跳过多少条、原因是什么，需要一个落点；
+    - **可撤销**：按批次回滚是导入功能的基本兜底（误导入整个文件能一键清掉）。
+
+    只记录**统计与元信息**，不存 CSV 原文（避免把大量原始账单数据堆进数据库，
+    也避免隐私数据二次留存）。
+    """
+
+    __tablename__ = "biz_expense_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # 原始文件名（仅用于展示，不落盘）
+    file_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # 识别出的平台：alipay / wechat / unknown
+    platform: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    # 实际用于解码的编码：utf-8 / gb18030 …
+    encoding: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    total_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    imported_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 与库内历史或本次文件内重复的条数
+    duplicate_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 导入金额合计（成功行），便于导入后立刻核对
+    amount_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
 
 class BizTimeEntry(Base):
     """独立工时台账（数据大屏的工作量来源之一）。
@@ -414,6 +462,13 @@ class BizShare(Base):
     - scope_ids 为空 = 不分享任何记录（创建即无效，等同不发），
       防止误操作把空范围当成「全部可见」；
     - 分享出去的视图**不含 owner_uid**，且不暴露其他未勾选的记录。
+
+    v1.0.32 扩展（多类 + 可选口令）：
+    - scopes 取代 scope_ids 成为实际范围，一次分享可同时勾选
+      财务流水 / 客户信息 / 工作量 / 出差路径，每项独立开关；
+      旧数据（scopes 为空 dict）仍按 scope_kind + scope_ids 读取，向后兼容；
+    - pass_hash 是可选访问口令的哈希：设了口令后，仅拿到链接不够，
+      接收者还必须输入口令。适合把敏感财务发给外部人员时二次保护。
     """
 
     __tablename__ = "biz_shares"
@@ -423,10 +478,22 @@ class BizShare(Base):
     title: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     # token 的 sha256 哈希（十六进制），明文不落库
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    # 被勾选的记录 id 列表（JSON 数组 of int）
+    # 被勾选的记录 id 列表（JSON 数组 of int）—— **旧字段，仅为向后兼容保留**
+    # v1.0.32 起实际以 scopes 为准；读取时 scopes 为空才回落到本字段。
     scope_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     # 分享内容的类别：expense（财务）| workload（工作量）| trip（出差）
     scope_kind: Mapped[str] = mapped_column(String(16), default="expense", nullable=False)
+
+    # v1.0.32：**多类分享**。一次分享可同时包含财务流水 / 客户信息 / 工作量 / 出差路径，
+    # 每项独立开关。结构 {kind: [id, ...]}：
+    #   expense / customer / trip  -> 显式勾选的记录 id
+    #   workload                   -> 恒为空数组（工作量是聚合口径，没有逐条 id），
+    #                                 **键存在即表示包含工作量统计视图**
+    # 为空 dict 表示不分享任何内容（创建即无效，防止空范围被当成「全部可见」）。
+    scopes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # 可选访问口令的 sha256 哈希（v1.0.32）。空串 = 不设口令（拿到链接即可看）。
+    # 与 token 同样**只存哈希不存明文**，明文只在创建时回给创建者一次。
+    pass_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     # 有效期（ISO8601 datetime），到点即失效
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # 1 = 已撤销，立即失效
