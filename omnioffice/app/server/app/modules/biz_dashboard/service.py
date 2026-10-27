@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import io
 import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -536,6 +537,7 @@ def _expense_dto(e: BizExpense) -> dict:
         "orderNo": e.order_no or "",
         "counterparty": e.counterparty or "",
         "txnType": e.txn_type or "",
+        "paymentMethod": e.payment_method or "",
         "importBatchId": e.import_batch_id,
     }
 
@@ -548,12 +550,15 @@ def list_expenses(
     date_from: str = "",
     date_to: str = "",
     counterparty: str = "",
+    payment_method: str = "",
 ) -> list[dict]:
     stmt = select(BizExpense).where(BizExpense.owner_uid == identity.uid)
     if kind:
         stmt = stmt.where(BizExpense.kind == kind)
     if customer_id:
         stmt = stmt.where(BizExpense.customer_id == customer_id)
+    if (payment_method or "").strip():
+        stmt = stmt.where(BizExpense.payment_method == payment_method.strip())
     if (counterparty or "").strip():
         # 交易方关键字搜索。**刻意同时匹配关联客户的名字**：
         # v1.0.32 之前录入的流水只有 customer_id、没有 counterparty，
@@ -601,6 +606,7 @@ def create_expense(db: Session, identity: Identity, body: dict) -> dict:
         note=(body.get("note") or "").strip(),
         # 交易方：与关联客户（customerId）是两个概念，可各自独立填写
         counterparty=(body.get("counterparty") or "").strip()[:128],
+        payment_method=(body.get("paymentMethod") or "").strip()[:32],
     )
     db.add(row)
     db.commit()
@@ -626,6 +632,8 @@ def update_expense(db: Session, identity: Identity, eid: int, body: dict) -> dic
         row.trip_id = _opt_int(body.get("tripId"))
     if "counterparty" in body:
         row.counterparty = (body.get("counterparty") or "").strip()[:128]
+    if "paymentMethod" in body:
+        row.payment_method = (body.get("paymentMethod") or "").strip()[:32]
     if "note" in body:
         row.note = (body.get("note") or "").strip()
     db.commit()
@@ -1375,6 +1383,7 @@ def commit_bill_import(db: Session, identity: Identity, raw: bytes, file_name: s
                 order_no=(r.order_no or "")[:64],
                 counterparty=(r.counterparty or "")[:128],
                 txn_type=(r.txn_type or "")[:64],
+                payment_method=(r.payment_method or "")[:32],
                 import_batch_id=batch.id,
             )
         )
@@ -1428,3 +1437,166 @@ def delete_bill_import(db: Session, identity: Identity, batch_id: int) -> dict:
     db.delete(batch)
     db.commit()
     return {"id": batch_id, "removed": removed}
+
+
+# ================================================================ 收支趋势与导出（v1.0.34）
+
+
+def list_payment_methods(db: Session, identity: Identity) -> list[str]:
+    """已用过的支付方式清单（供前端筛选下拉）。
+
+    必须**独立于当前筛选**返回全集：若从筛选后的列表里取 distinct，
+    用户选了「零钱」之后下拉就只剩「零钱」，再也切不回去。
+    """
+    rows = db.scalars(
+        select(BizExpense.payment_method)
+        .where(BizExpense.owner_uid == identity.uid, BizExpense.payment_method != "")
+        .distinct()
+        .order_by(BizExpense.payment_method)
+    ).all()
+    return [r for r in rows if r]
+
+
+def expense_trend(
+    db: Session,
+    identity: Identity,
+    granularity: str = "month",
+    date_from: str = "",
+    date_to: str = "",
+    kind: str = "",
+) -> dict:
+    """按日/月聚合收支趋势。
+
+    只做**一次分组查询**（按 bucket + kind 求和），在内存里合成收入/支出两列，
+    而不是分别查两次 —— 账单动辄几千行，少一次全表扫描在 NAS 上是实打实的差距。
+
+    occurred_on 存的是 YYYY-MM-DD 字符串，按月聚合直接取前 7 位，
+    比转日期再截断便宜，且 SQLite 与 PostgreSQL 行为一致。
+    """
+    gran = "day" if granularity == "day" else "month"
+    bucket_expr = (
+        func.substr(BizExpense.occurred_on, 1, 7) if gran == "month" else BizExpense.occurred_on
+    ).label("bucket")
+
+    stmt = select(
+        bucket_expr, BizExpense.kind, func.sum(BizExpense.amount).label("total")
+    ).where(BizExpense.owner_uid == identity.uid, BizExpense.occurred_on != "")
+    if kind in constants.EXPENSE_KIND_CODES:
+        stmt = stmt.where(BizExpense.kind == kind)
+    if date_from:
+        stmt = stmt.where(BizExpense.occurred_on >= _norm_date(date_from, "开始日期"))
+    if date_to:
+        stmt = stmt.where(BizExpense.occurred_on <= _norm_date(date_to, "结束日期"))
+    stmt = stmt.group_by(bucket_expr, BizExpense.kind).order_by(bucket_expr)
+
+    agg: dict[str, dict[str, float]] = {}
+    for bucket, k, total in db.execute(stmt).all():
+        if not bucket:
+            continue
+        item = agg.setdefault(str(bucket), {"income": 0.0, "expense": 0.0})
+        if k == "income":
+            item["income"] += float(total or 0)
+        else:
+            item["expense"] += float(total or 0)
+
+    buckets = []
+    for key in sorted(agg):
+        v = agg[key]
+        if gran == "month" and len(key) >= 7:
+            label = f"{key[:4]}年{int(key[5:7])}月"
+        else:
+            label = key
+        buckets.append(
+            {
+                "key": key,
+                "label": label,
+                "income": round(v["income"], 2),
+                "expense": round(v["expense"], 2),
+                "net": round(v["income"] - v["expense"], 2),
+            }
+        )
+    return {"granularity": gran, "buckets": buckets}
+
+
+def export_expenses_xlsx(
+    db: Session,
+    identity: Identity,
+    kind: str = "",
+    customer_id: int | None = None,
+    date_from: str = "",
+    date_to: str = "",
+    counterparty: str = "",
+    payment_method: str = "",
+) -> tuple[bytes, str]:
+    """按当前筛选条件导出财务流水为 XLSX。
+
+    导出**复用与列表完全相同的筛选逻辑**（直接调 list_expenses），
+    否则会出现「屏幕上看到 10 条、导出 20 条」这类信任问题。
+
+    返回 (文件字节, 建议文件名)。
+    """
+    # 延迟导入：openpyxl 只在真正导出时才需要，不该拖慢应用启动
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    items = list_expenses(db, identity, kind, customer_id, date_from, date_to, counterparty, payment_method)
+
+    # 关联客户名：一次性查出，避免逐行查库
+    names: dict[int, str] = {}
+    if items:
+        ids = [x["customerId"] for x in items if x.get("customerId")]
+        if ids:
+            rows = db.scalars(
+                select(BizCustomer).where(
+                    BizCustomer.owner_uid == identity.uid, BizCustomer.id.in_(ids)
+                )
+            ).all()
+            names = {c.id: c.name for c in rows}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "财务流水"
+
+    headers = [
+        "日期",
+        "类型",
+        "类别",
+        "交易方",
+        "关联客户",
+        "支付方式",
+        "金额",
+        "订单号",
+        "来源平台",
+        "备注",
+    ]
+    head_font = Font(bold=True, color="FFFFFF")
+    head_fill = PatternFill("solid", fgColor="4C6FFF")
+    for col, name in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=name)
+        cell.font = head_font
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for r, it in enumerate(items, start=2):
+        ws.cell(row=r, column=1, value=it.get("occurredOn", ""))
+        ws.cell(row=r, column=2, value="收入" if it.get("kind") == "income" else "支出")
+        ws.cell(row=r, column=3, value=it.get("category") or "未分类")
+        ws.cell(row=r, column=4, value=it.get("counterparty") or "")
+        ws.cell(row=r, column=5, value=names.get(it.get("customerId") or 0, ""))
+        ws.cell(row=r, column=6, value=it.get("paymentMethod") or "")
+        amt = ws.cell(row=r, column=7, value=float(it.get("amount") or 0))
+        amt.number_format = "#,##0.00"
+        ws.cell(row=r, column=8, value=it.get("orderNo") or "")
+        ws.cell(row=r, column=9, value=constants.BILL_PLATFORM_LABELS.get(it.get("platform", ""), ""))
+        ws.cell(row=r, column=10, value=it.get("note") or "")
+
+    widths = [12, 6, 12, 20, 16, 14, 12, 22, 10, 30]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    stamp = _today().replace("-", "")
+    return buf.getvalue(), f"财务流水_{stamp}.xlsx"

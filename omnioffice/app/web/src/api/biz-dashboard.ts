@@ -3,7 +3,7 @@
  * 复用全局 api() 封装（统一错误格式 + 网关前缀 + 登录失效提示）。
  * 身份参数一律不由前端传递，服务端以网关 Header 为准。
  */
-import { api, API_BASE } from "./client";
+import { api, API_BASE, downloadFile } from "./client";
 
 export interface BizCustomer {
   id: number;
@@ -93,7 +93,25 @@ export interface BizExpense {
    *  与 customerId（关联客户档案）是两个概念，可各自独立有值。 */
   counterparty: string;
   txnType: string;
+  /** 支付方式：钱走的渠道（零钱 / 余额宝 / 银行卡），与 platform（账单来源）不同 */
+  paymentMethod: string;
   importBatchId: number | null;
+}
+
+// ---------------------------------------------------------------- 收支趋势
+
+export interface ExpenseTrendBucket {
+  /** month 时是 YYYY-MM，day 时是 YYYY-MM-DD */
+  key: string;
+  label: string;
+  income: number;
+  expense: number;
+  net: number;
+}
+
+export interface ExpenseTrend {
+  granularity: "month" | "day";
+  buckets: ExpenseTrendBucket[];
 }
 
 // ---------------------------------------------------------------- 账单导入
@@ -310,6 +328,8 @@ export const bizApi = {
       dateTo?: string;
       /** 交易方关键字（模糊匹配，同时会匹配关联客户名以兼容历史数据） */
       counterparty?: string;
+      /** 支付方式（精确匹配，如「零钱」「招商银行(1234)」） */
+      paymentMethod?: string;
     } = {},
   ) => {
     const q = new URLSearchParams();
@@ -318,8 +338,40 @@ export const bizApi = {
     if (params.dateFrom) q.set("date_from", params.dateFrom);
     if (params.dateTo) q.set("date_to", params.dateTo);
     if (params.counterparty) q.set("counterparty", params.counterparty);
+    if (params.paymentMethod) q.set("payment_method", params.paymentMethod);
     const s = q.toString();
     return api<{ items: BizExpense[] }>(`/biz-dashboard/expenses${s ? `?${s}` : ""}`);
+  },
+  /** 已用过的支付方式全集（筛选下拉用，不受当前筛选影响） */
+  listPaymentMethods: () => api<{ items: string[] }>("/biz-dashboard/expenses/payment-methods"),
+  /** 收支趋势：按日/月聚合后的收入、支出与净额 */
+  expenseTrend: (params: { granularity?: "month" | "day"; dateFrom?: string; dateTo?: string } = {}) => {
+    const q = new URLSearchParams();
+    q.set("granularity", params.granularity ?? "month");
+    if (params.dateFrom) q.set("date_from", params.dateFrom);
+    if (params.dateTo) q.set("date_to", params.dateTo);
+    return api<ExpenseTrend>(`/biz-dashboard/expenses/trend?${q.toString()}`);
+  },
+  /** 导出 XLSX。筛选参数与列表同源，保证「看到什么就导出什么」 */
+  exportExpenses: (
+    params: {
+      kind?: string;
+      customerId?: number;
+      dateFrom?: string;
+      dateTo?: string;
+      counterparty?: string;
+      paymentMethod?: string;
+    } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (params.kind) q.set("kind", params.kind);
+    if (params.customerId) q.set("customer_id", String(params.customerId));
+    if (params.dateFrom) q.set("date_from", params.dateFrom);
+    if (params.dateTo) q.set("date_to", params.dateTo);
+    if (params.counterparty) q.set("counterparty", params.counterparty);
+    if (params.paymentMethod) q.set("payment_method", params.paymentMethod);
+    const s = q.toString();
+    return downloadFile(`/biz-dashboard/expenses/export${s ? `?${s}` : ""}`, "财务流水.xlsx");
   },
   createExpense: (body: Partial<BizExpense>) =>
     api<BizExpense>("/biz-dashboard/expenses", {

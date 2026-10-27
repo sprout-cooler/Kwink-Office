@@ -142,5 +142,14 @@
     "fpk": "omnioffice_1.0.33_all_20261026.fpk",
     "commit": null,
     "note": "财务管理：交易方字段统一（收/付款方相对方规则 + 历史数据读时兼容）"
+  },
+  {
+    "ts": "2026-10-27T15:46:41.521Z",
+    "appname": "omnioffice",
+    "version": "1.0.34",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.34_all_20261027.fpk",
+    "commit": "efa4d33",
+    "note": "财务管理 P0：收支趋势图 + 支付方式维度 + 时间筛选 + XLSX 导出（对标 Cashbook）"
   }
 ]

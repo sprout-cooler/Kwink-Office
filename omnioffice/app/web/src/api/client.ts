@@ -64,3 +64,43 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return data as T;
 }
+
+/** 下载二进制文件（导出用）。
+ *
+ * 不能复用 api()：它会 `JSON.parse` 响应体，遇到 xlsx 二进制直接抛
+ * BAD_RESPONSE。文件下载单独走 blob + a[download]，且不经过 JSON 解析。
+ */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const sep = path.startsWith("/") ? "" : "/";
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${sep}${path}`, { headers: { Accept: "*/*" } });
+  } catch {
+    throw new ApiError("NETWORK", "网络不可达：请确认应用已启动后重试");
+  }
+  if (!res.ok) {
+    // 错误体是 JSON，这里单独解析，把后端的可行动提示透给用户
+    let msg = `导出失败（HTTP ${res.status}）`;
+    try {
+      const body = (await res.json()) as { detail?: { message?: string }; message?: string };
+      msg = body?.detail?.message ?? body?.message ?? msg;
+    } catch {
+      /* 非 JSON 错误体就用默认文案 */
+    }
+    throw new ApiError("HTTP_ERROR", msg, res.status);
+  }
+  // 文件名优先取响应头的 Content-Disposition（后端已做 RFC 5987 编码）
+  const disp = res.headers.get("Content-Disposition") ?? "";
+  const m = disp.match(/filename\*=UTF-8''([^;]+)/i);
+  const name = m ? decodeURIComponent(m[1]) : fallbackName;
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

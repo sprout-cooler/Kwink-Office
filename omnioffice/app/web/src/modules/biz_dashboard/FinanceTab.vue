@@ -6,8 +6,16 @@ import {
   type BillImportBatch,
   type BizCapabilities,
   type BizExpense,
+  type ExpenseTrend,
 } from "@/api/biz-dashboard";
-import { chartColor, chartTextColor, chartTooltipBg, chartTooltipBorder, chartTooltipTextColor } from "@/composables/chart-theme";
+import {
+  chartColor,
+  chartSplitLineColor,
+  chartTextColor,
+  chartTooltipBg,
+  chartTooltipBorder,
+  chartTooltipTextColor,
+} from "@/composables/chart-theme";
 import {
   OOCard,
   OOEmptyState,
@@ -34,6 +42,16 @@ const filterKind = ref("");
 const filterCustomer = ref<number | undefined>(undefined);
 /** 交易方关键字（模糊搜索；后端同时会匹配关联客户名以兼容历史流水） */
 const filterCounterparty = ref("");
+/** v1.0.34：时间范围 + 支付方式 */
+const filterPayment = ref("");
+const dateRange = ref<[string, string] | null>(null);
+const paymentMethods = ref<string[]>([]);
+const trendMonth = ref<ExpenseTrend>({ granularity: "month", buckets: [] });
+const trendDay = ref<ExpenseTrend>({ granularity: "day", buckets: [] });
+const exporting = ref(false);
+
+const dateFromStr = () => dateRange.value?.[0] ?? "";
+const dateToStr = () => dateRange.value?.[1] ?? "";
 
 const dialog = ref(false);
 const editing = ref<BizExpense | null>(null);
@@ -55,20 +73,33 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [list, cs, c, bs] = await Promise.all([
+    const [list, cs, c, bs, pm] = await Promise.all([
       bizApi.listExpenses({
         kind: filterKind.value,
         customerId: filterCustomer.value,
         counterparty: filterCounterparty.value,
+        paymentMethod: filterPayment.value,
+        dateFrom: dateFromStr(),
+        dateTo: dateToStr(),
       }),
       bizApi.listCustomers(),
       bizApi.capabilities(),
       bizApi.listBillImports(),
+      bizApi.listPaymentMethods(),
     ]);
     items.value = list.items;
     customers.value = cs.items.map((x) => ({ id: x.id, name: x.name }));
     caps.value = c;
     batches.value = bs.items;
+    paymentMethods.value = pm.items;
+    // 趋势图跟随时间范围，但不跟随「类型/交易方」等维度筛选 ——
+    // 趋势的意义是看整体走势，被维度切成残缺片段反而误导。
+    const [tm, td] = await Promise.all([
+      bizApi.expenseTrend({ granularity: "month", dateFrom: dateFromStr(), dateTo: dateToStr() }),
+      bizApi.expenseTrend({ granularity: "day", dateFrom: dateFromStr(), dateTo: dateToStr() }),
+    ]);
+    trendMonth.value = tm;
+    trendDay.value = td;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -203,6 +234,172 @@ const categoryOption = computed(() => {
   };
 });
 
+// ---- v1.0.34 趋势图与支付方式构成 ----
+// 收入用调色板第 2 色（青绿）、支出用第 4 色（粉红）：
+// 深浅两套色板在这两个位置都是「绿 / 红」观感，符合收支直觉，且自动跟随主题。
+const INCOME_COLOR = () => chartColor(1);
+const EXPENSE_COLOR = () => chartColor(3);
+
+function axisTooltip() {
+  return {
+    trigger: "axis",
+    backgroundColor: chartTooltipBg(),
+    borderColor: chartTooltipBorder(),
+    textStyle: { color: chartTooltipTextColor() },
+  };
+}
+
+function categoryAxis(labels: string[]) {
+  const text = chartTextColor();
+  return {
+    type: "category" as const,
+    data: labels,
+    axisLabel: { color: text, fontSize: 11 },
+    axisLine: { lineStyle: { color: chartSplitLineColor() } },
+    axisTick: { show: false },
+  };
+}
+
+function valueAxis() {
+  const text = chartTextColor();
+  return {
+    type: "value" as const,
+    axisLabel: { color: text, fontSize: 11 },
+    splitLine: { lineStyle: { color: chartSplitLineColor() } },
+  };
+}
+
+const trendMonthOption = computed(() => {
+  const b = trendMonth.value.buckets;
+  return {
+    tooltip: axisTooltip(),
+    legend: {
+      data: ["收入", "支出"],
+      textStyle: { color: chartTextColor() },
+      itemWidth: 10,
+      itemHeight: 10,
+      top: 0,
+    },
+    grid: { left: 4, right: 12, top: 36, bottom: 4, containLabel: true },
+    xAxis: categoryAxis(b.map((x) => x.label)),
+    yAxis: valueAxis(),
+    series: [
+      {
+        name: "收入",
+        type: "bar",
+        data: b.map((x) => x.income),
+        itemStyle: { color: INCOME_COLOR(), borderRadius: [4, 4, 0, 0] },
+      },
+      {
+        name: "支出",
+        type: "bar",
+        data: b.map((x) => x.expense),
+        itemStyle: { color: EXPENSE_COLOR(), borderRadius: [4, 4, 0, 0] },
+      },
+    ],
+  };
+});
+
+const trendDayOption = computed(() => {
+  // 近 30 天：日报的粒度太细，只取最后 30 个点，否则 x 轴挤成一团
+  const b = trendDay.value.buckets.slice(-30);
+  return {
+    tooltip: axisTooltip(),
+    legend: {
+      data: ["收入", "支出"],
+      textStyle: { color: chartTextColor() },
+      itemWidth: 10,
+      itemHeight: 10,
+      top: 0,
+    },
+    grid: { left: 4, right: 12, top: 36, bottom: 4, containLabel: true },
+    xAxis: categoryAxis(b.map((x) => x.key.slice(5))),
+    yAxis: valueAxis(),
+    series: [
+      {
+        name: "收入",
+        type: "line",
+        smooth: true,
+        showSymbol: false,
+        data: b.map((x) => x.income),
+        itemStyle: { color: INCOME_COLOR() },
+        areaStyle: { opacity: 0.12 },
+      },
+      {
+        name: "支出",
+        type: "line",
+        smooth: true,
+        showSymbol: false,
+        data: b.map((x) => x.expense),
+        itemStyle: { color: EXPENSE_COLOR() },
+        areaStyle: { opacity: 0.12 },
+      },
+    ],
+  };
+});
+
+const paymentOption = computed(() => {
+  const agg: Record<string, number> = {};
+  items.value
+    .filter((x) => x.kind === "expense")
+    .forEach((x) => {
+      const k = x.paymentMethod || "未记录";
+      agg[k] = (agg[k] ?? 0) + x.amount;
+    });
+  const rows = Object.entries(agg).sort((a, b) => b[1] - a[1]);
+  const text = chartTextColor();
+  return {
+    tooltip: {
+      trigger: "item",
+      backgroundColor: chartTooltipBg(),
+      borderColor: chartTooltipBorder(),
+      textStyle: { color: chartTooltipTextColor() },
+    },
+    legend: {
+      orient: "vertical",
+      right: 0,
+      top: "center",
+      textStyle: { color: text },
+      itemWidth: 10,
+      itemHeight: 10,
+    },
+    series: [
+      {
+        type: "pie",
+        radius: ["42%", "68%"],
+        center: ["34%", "50%"],
+        avoidLabelOverlap: true,
+        label: { color: text, fontSize: 12 },
+        itemStyle: { borderRadius: 6 },
+        data: rows.map(([name, value], i) => ({
+          name,
+          value,
+          itemStyle: { color: chartColor(i) },
+        })),
+      },
+    ],
+  };
+});
+
+async function exportXlsx() {
+  exporting.value = true;
+  error.value = "";
+  try {
+    await bizApi.exportExpenses({
+      kind: filterKind.value,
+      customerId: filterCustomer.value,
+      dateFrom: dateFromStr(),
+      dateTo: dateToStr(),
+      counterparty: filterCounterparty.value,
+      paymentMethod: filterPayment.value,
+    });
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    exporting.value = false;
+  }
+}
+
 const money = (n: number) =>
   `¥${Number(n || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 </script>
@@ -281,19 +478,51 @@ const money = (n: number) =>
           >
             <el-option v-for="c in customers" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
+          <el-select
+            v-model="filterPayment"
+            placeholder="支付方式"
+            clearable
+            class="w180"
+            @change="load"
+          >
+            <el-option v-for="p in paymentMethods" :key="p" :label="p" :value="p" />
+          </el-select>
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            class="bz-range"
+            @change="load"
+          />
         </template>
         <template #right>
           <span class="bz-sum">收入 <b class="oo-num">{{ money(totalIncome) }}</b></span>
           <span class="bz-sum">支出 <b class="oo-num">{{ money(totalExpense) }}</b></span>
+          <el-button :loading="exporting" @click="exportXlsx">
+            <OOIcon name="download" :size="15" style="margin-right: 5px; vertical-align: -2px" />
+            导出 XLSX
+          </el-button>
         </template>
       </OOToolbar>
 
-      <div class="bz-grid">
-        <OOCard title="支出分类构成" subtitle="仅统计支出类流水">
-          <ChartBox type="pie" :option="categoryOption" height="280px" />
+      <div class="bz-charts">
+        <OOCard title="月度收支趋势" subtitle="按月份汇总，看整体走势">
+          <ChartBox type="bar" :option="trendMonthOption" height="250px" />
         </OOCard>
+        <OOCard title="近 30 日走势" subtitle="按天汇总">
+          <ChartBox type="line" :option="trendDayOption" height="250px" />
+        </OOCard>
+        <OOCard title="支出分类构成" subtitle="钱花在哪">
+          <ChartBox type="pie" :option="categoryOption" height="250px" />
+        </OOCard>
+        <OOCard title="支付方式构成" subtitle="钱从哪个渠道出去">
+          <ChartBox type="pie" :option="paymentOption" height="250px" />
+        </OOCard>
+      </div>
 
-        <OOCard title="流水明细" :subtitle="`共 ${items.length} 条`" flush>
+      <OOCard title="流水明细" :subtitle="`共 ${items.length} 条`" flush class="bz-table-card">
           <el-table :data="items" size="small" v-loading="loading" max-height="320">
             <template #empty>
               <OOEmptyState variant="inbox" title="暂无流水" description="调整筛选条件，或新增一条流水记录" />
@@ -320,6 +549,9 @@ const money = (n: number) =>
                 }}
               </template>
             </el-table-column>
+            <el-table-column label="支付方式" width="110">
+              <template #default="{ row }">{{ row.paymentMethod || "—" }}</template>
+            </el-table-column>
             <el-table-column label="金额" width="110" align="right">
               <template #default="{ row }">
                 <span class="oo-num">{{ money(row.amount) }}</span>
@@ -337,7 +569,6 @@ const money = (n: number) =>
             </el-table-column>
           </el-table>
         </OOCard>
-      </div>
     </OOCard>
 
     <OOCard
@@ -473,11 +704,19 @@ const money = (n: number) =>
   margin-bottom: var(--oo-space-5);
 }
 
-.bz-grid {
+.bz-charts {
   display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--oo-space-4);
   padding: var(--oo-space-4);
+}
+
+.bz-table-card {
+  margin: 0 var(--oo-space-4) var(--oo-space-4);
+}
+
+.bz-range {
+  width: 250px;
 }
 
 .bz-sum {
@@ -526,8 +765,11 @@ const money = (n: number) =>
 }
 
 @media (max-width: 900px) {
-  .bz-grid {
+  .bz-charts {
     grid-template-columns: 1fr;
+  }
+  .bz-range {
+    width: 100%;
   }
 }
 
@@ -536,8 +778,11 @@ const money = (n: number) =>
     grid-template-columns: repeat(2, 1fr);
     gap: var(--oo-space-2);
   }
-  .bz-grid {
+  .bz-charts {
     padding: var(--oo-space-3);
+  }
+  .bz-table-card {
+    margin: 0 var(--oo-space-3) var(--oo-space-3);
   }
 }
 </style>

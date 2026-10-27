@@ -477,5 +477,147 @@ class TestShareScopes(unittest.TestCase):
         self.assertNotIn(self.e2.id, ids)
 
 
+# ---- P0（v1.0.34）：支付方式 / 趋势 / 导出 ----
+WECHAT_WITH_METHOD = (
+    "交易时间,交易类型,交易对方,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注\n"
+    "2024-06-01 10:00:00,商户消费,A超市,/,支出,¥100.00,零钱,支付成功,M001,,\n"
+    "2024-06-02 10:00:00,商户消费,B加油站,/,支出,¥300.00,招商银行(1234),支付成功,M002,,\n"
+    "2024-06-03 10:00:00,转账,王五,/,收入,¥500.00,零钱,已存入零钱,M003,,\n"
+    "2024-07-05 10:00:00,商户消费,C餐厅,/,支出,¥80.00,零钱,支付成功,M004,,\n"
+)
+
+
+class TestPaymentMethod(unittest.TestCase):
+    """支付方式 = 钱走的渠道（零钱/余额宝/银行卡），与「账单来自哪个平台」是两回事。"""
+
+    def setUp(self):
+        self.db = _fresh_db()
+        self.uid = "u1"
+
+    def test_parsed_from_wechat_column(self):
+        r = bi.parse_bill(WECHAT_WITH_METHOD.encode("utf-8"), "wx.csv")
+        self.assertIn("payment_method", r.mapping)
+        self.assertEqual(r.mapping["payment_method"], 6)
+        methods = [x.payment_method for x in r.rows if x.status == bi.STATUS_OK]
+        self.assertEqual(methods, ["零钱", "招商银行(1234)", "零钱", "零钱"])
+
+    def test_alipay_column_name(self):
+        """支付宝叫「收/付款方式」，必须也能识别，且不能同时被当成交易类型。"""
+        csv_text = (
+            "交易时间,交易分类,交易对方,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号\n"
+            "2024/6/1 10:00:00,购物,天猫,,支出,50.00,余额宝,交易成功,AL001\n"
+        )
+        r = bi.parse_bill(csv_text.encode("utf-8"), "ali.csv")
+        self.assertEqual(r.rows[0].payment_method, "余额宝")
+        # 同一列不该同时落到交易类型上（否则类别会被写成「余额宝」）
+        self.assertNotEqual(r.rows[0].txn_type, "余额宝")
+
+    def test_written_on_import(self):
+        service.commit_bill_import(self.db, _ident(self.uid), WECHAT_WITH_METHOD.encode("utf-8"), "wx.csv")
+        rows = service.list_expenses(self.db, _ident(self.uid))
+        self.assertTrue(all(x["paymentMethod"] for x in rows))
+        self.assertEqual(
+            sorted({x["paymentMethod"] for x in rows}), ["招商银行(1234)", "零钱"]
+        )
+
+    def test_filter_by_payment_method(self):
+        service.commit_bill_import(self.db, _ident(self.uid), WECHAT_WITH_METHOD.encode("utf-8"), "wx.csv")
+        rows = service.list_expenses(self.db, _ident(self.uid), payment_method="零钱")
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(x["paymentMethod"] == "零钱" for x in rows))
+
+
+class TestExpenseTrend(unittest.TestCase):
+    """趋势聚合：一次分组查询合成收入/支出两列。"""
+
+    def setUp(self):
+        self.db = _fresh_db()
+        self.uid = "u1"
+
+    def _seed(self):
+        _expense(self.db, self.uid, kind="expense", amount=100, occurred_on="2024-01-05")
+        _expense(self.db, self.uid, kind="income", amount=500, occurred_on="2024-01-20")
+        _expense(self.db, self.uid, kind="expense", amount=200, occurred_on="2024-02-03")
+        _expense(self.db, self.uid, kind="expense", amount=50, occurred_on="2024-02-28")
+
+    def test_monthly_aggregation(self):
+        self._seed()
+        t = service.expense_trend(self.db, _ident(self.uid), "month")
+        self.assertEqual(t["granularity"], "month")
+        self.assertEqual(len(t["buckets"]), 2)
+        jan = t["buckets"][0]
+        self.assertEqual(jan["key"], "2024-01")
+        self.assertEqual(jan["income"], 500)
+        self.assertEqual(jan["expense"], 100)
+        self.assertEqual(jan["net"], 400)
+        feb = t["buckets"][1]
+        self.assertEqual(feb["expense"], 250)
+        self.assertEqual(feb["net"], -250)
+
+    def test_month_label_is_chinese(self):
+        self._seed()
+        t = service.expense_trend(self.db, _ident(self.uid), "month")
+        self.assertEqual(t["buckets"][0]["label"], "2024年1月")
+
+    def test_daily_aggregation(self):
+        self._seed()
+        t = service.expense_trend(self.db, _ident(self.uid), "day")
+        self.assertEqual(len(t["buckets"]), 4)
+        self.assertEqual(t["buckets"][0]["key"], "2024-01-05")
+
+    def test_date_range_filter(self):
+        self._seed()
+        t = service.expense_trend(self.db, _ident(self.uid), "month", "2024-02-01", "2024-02-29")
+        self.assertEqual(len(t["buckets"]), 1)
+        self.assertEqual(t["buckets"][0]["key"], "2024-02")
+
+    def test_other_users_data_excluded(self):
+        self._seed()
+        _expense(self.db, "u2", kind="income", amount=9999, occurred_on="2024-03-01")
+        t = service.expense_trend(self.db, _ident(self.uid), "month")
+        self.assertEqual(len(t["buckets"]), 2)
+
+
+class TestExportXlsx(unittest.TestCase):
+    """导出必须与列表同源，否则会「屏幕 10 条、导出 20 条」。"""
+
+    def setUp(self):
+        self.db = _fresh_db()
+        self.uid = "u1"
+
+    def test_export_matches_list(self):
+        service.commit_bill_import(self.db, _ident(self.uid), WECHAT_WITH_METHOD.encode("utf-8"), "wx.csv")
+        listed = service.list_expenses(self.db, _ident(self.uid))
+        data, name = service.export_expenses_xlsx(self.db, _ident(self.uid))
+        self.assertTrue(name.endswith(".xlsx"))
+        self.assertGreater(len(data), 1000)
+        from openpyxl import load_workbook
+        import io as _io
+        wb = load_workbook(_io.BytesIO(data))
+        ws = wb.active
+        self.assertEqual(ws.max_row, len(listed) + 1)  # +1 是表头
+        headers = [c.value for c in ws[1]]
+        self.assertEqual(headers[3], "交易方")
+        self.assertEqual(headers[5], "支付方式")
+
+    def test_export_honours_filters(self):
+        service.commit_bill_import(self.db, _ident(self.uid), WECHAT_WITH_METHOD.encode("utf-8"), "wx.csv")
+        data, _ = service.export_expenses_xlsx(self.db, _ident(self.uid), payment_method="零钱")
+        from openpyxl import load_workbook
+        import io as _io
+        ws = load_workbook(_io.BytesIO(data)).active
+        self.assertEqual(ws.max_row, 4)  # 1 表头 + 3 条零钱
+        methods = {ws.cell(row=r, column=6).value for r in range(2, ws.max_row + 1)}
+        self.assertEqual(methods, {"零钱"})
+
+    def test_export_isolates_owner(self):
+        _expense(self.db, "u2", amount=12345, occurred_on="2024-01-01")
+        data, _ = service.export_expenses_xlsx(self.db, _ident(self.uid))
+        from openpyxl import load_workbook
+        import io as _io
+        ws = load_workbook(_io.BytesIO(data)).active
+        self.assertEqual(ws.max_row, 1)  # 只有表头
+
+
 if __name__ == "__main__":
     unittest.main()

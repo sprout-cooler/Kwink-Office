@@ -8,7 +8,10 @@
 """
 from __future__ import annotations
 
+import urllib.parse
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ...core.identity import Identity, get_identity
@@ -151,6 +154,7 @@ def list_expenses(
     date_from: str = "",
     date_to: str = "",
     counterparty: str = "",
+    payment_method: str = "",
     db: Session = Depends(get_db),
     identity: Identity = Depends(_require_identity),
 ):
@@ -158,12 +162,78 @@ def list_expenses(
 
     counterparty 是**交易方**关键字（模糊匹配）。它同时会匹配关联客户的名字，
     以便 v1.0.32 之前只有客户关联、没有交易方字段的历史流水也能被搜到。
+    payment_method 是支付方式（精确匹配）。
     """
     return {
         "items": _guard(
-            service.list_expenses, db, identity, kind, customer_id, date_from, date_to, counterparty
+            service.list_expenses,
+            db,
+            identity,
+            kind,
+            customer_id,
+            date_from,
+            date_to,
+            counterparty,
+            payment_method,
         )
     }
+
+
+@router.get("/expenses/payment-methods")
+def list_payment_methods(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """已用过的支付方式全集（筛选下拉用，不受当前筛选影响）。"""
+    return {"items": _guard(service.list_payment_methods, db, identity)}
+
+
+@router.get("/expenses/trend")
+def expense_trend(
+    granularity: str = "month",
+    date_from: str = "",
+    date_to: str = "",
+    kind: str = "",
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """收支趋势（按日/月聚合）。granularity: month | day。"""
+    return _guard(service.expense_trend, db, identity, granularity, date_from, date_to, kind)
+
+
+@router.get("/expenses/export")
+def export_expenses(
+    kind: str = "",
+    customer_id: int | None = Query(default=None),
+    date_from: str = "",
+    date_to: str = "",
+    counterparty: str = "",
+    payment_method: str = "",
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """导出财务流水为 XLSX（按当前筛选条件）。
+
+    筛选参数与列表接口**完全一致**，保证「屏幕上看到什么就导出什么」。
+    """
+    data, filename = _guard(
+        service.export_expenses_xlsx,
+        db,
+        identity,
+        kind,
+        customer_id,
+        date_from,
+        date_to,
+        counterparty,
+        payment_method,
+    )
+    # 中文文件名必须走 RFC 5987 编码，否则在部分浏览器上会变成乱码
+    quoted = urllib.parse.quote(filename)
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
+    )
 
 
 @router.post("/expenses")

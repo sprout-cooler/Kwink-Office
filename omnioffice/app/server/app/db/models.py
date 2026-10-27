@@ -389,6 +389,10 @@ class BizExpense(Base):
     counterparty: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     # 平台原始的交易类型（如「商户消费」「转账」「退款」），保留原样便于对账
     txn_type: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    # 支付方式（v1.0.34）：账单的「收/付款方式 / 支付方式」列，如「零钱」「余额宝」「招商银行(1234)」。
+    # 与平台（platform）不同：platform 标记账单来源，这里是**这笔钱走的渠道**，
+    # 统计「哪个渠道在花钱」用这一列。
+    payment_method: Mapped[str] = mapped_column(String(32), default="", index=True, nullable=False)
     # 所属导入批次（BizExpenseImport.id）。空 = 手工录入
     import_batch_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 

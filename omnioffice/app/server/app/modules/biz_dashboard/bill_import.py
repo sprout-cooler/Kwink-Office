@@ -84,6 +84,7 @@ class ParsedRow:
     direction: str = ""
     order_no: str = ""
     note: str = ""
+    payment_method: str = ""
     dedupe_key: str = ""
     raw: dict[str, str] = field(default_factory=dict)
 
@@ -98,6 +99,7 @@ class ParsedRow:
             # 原始的两列也回传：交易方是推导出来的，预览时要让用户能核对推导依据
             "payer": self.raw.get("payer", ""),
             "payee": self.raw.get("payee", ""),
+            "paymentMethod": self.payment_method,
             "amount": float(self.amount) if self.amount is not None else None,
             "direction": self.direction,
             "orderNo": self.order_no,
@@ -443,6 +445,7 @@ def _parse_row(
         "counterparty": _cell(cells, mapping.get("counterparty")),
         "payer": _cell(cells, mapping.get("payer")),
         "payee": _cell(cells, mapping.get("payee")),
+        "paymentMethod": _cell(cells, mapping.get("payment_method")),
         "amount": _cell(cells, mapping.get("amount")),
         "direction": _cell(cells, mapping.get("direction")) if has_direction_col else "",
         "orderNo": _cell(cells, mapping.get("order_no")),
@@ -535,6 +538,7 @@ def _parse_row(
         direction=direction,
         order_no=order_no,
         note=raw["note"],
+        payment_method=raw["paymentMethod"],
         dedupe_key=build_dedupe_key(platform, order_no, txn_time, amount, counterparty),
         raw=raw,
     )
