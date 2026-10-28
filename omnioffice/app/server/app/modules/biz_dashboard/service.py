@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from ...core.identity import Identity
 from ...db.models import (
+    BizCategoryRule,
     BizCustomer,
     BizExpense,
     BizExpenseImport,
@@ -1323,6 +1324,28 @@ def _bill_preview_payload(result, rows: list) -> dict:
     }
 
 
+def _apply_category_mapping(result, rules: list) -> None:
+    """按映射规则算出每一行的**最终类别**（就地写入 raw['mappedCategory']）。
+
+    账单导出的「交易分类」是平台口径（餐饮美食/交通出行…），
+    直接当财务类别会得到一堆和自建体系对不上的值。
+    未命中规则的行**保留平台原始分类**（不猜），并在预览里如实展示。
+    """
+    for r in result.rows:
+        if r.status != bill_import.STATUS_OK:
+            r.raw["mappedCategory"] = ""
+            continue
+        r.raw["mappedCategory"] = match_category(r.txn_type, result.platform, rules)
+
+
+def _final_category(row, platform: str, rules: list) -> str:
+    """导入落库时使用的类别：映射结果优先，无映射结果时用平台原始分类。"""
+    mapped = match_category(row.txn_type, platform, rules)
+    if mapped:
+        return mapped[:64]
+    return (row.txn_type or "账单导入")[:64]
+
+
 def preview_bill_import(db: Session, identity: Identity, raw: bytes, file_name: str) -> dict:
     """解析账单并给出**预览**（不写库）。
 
@@ -1332,6 +1355,8 @@ def preview_bill_import(db: Session, identity: Identity, raw: bytes, file_name: 
     result = bill_import.parse_bill(raw, file_name)
     db_keys = _existing_dedupe_keys(db, identity, result.platform, result.rows)
     _apply_duplicates(result.rows, db_keys)
+    # 分类映射：预览就要让用户看到「这条最终会归到哪个类别」
+    _apply_category_mapping(result, load_category_rules(db, identity))
     return _bill_preview_payload(result, result.rows)
 
 
@@ -1344,6 +1369,8 @@ def commit_bill_import(db: Session, identity: Identity, raw: bytes, file_name: s
     result = bill_import.parse_bill(raw, file_name)
     db_keys = _existing_dedupe_keys(db, identity, result.platform, result.rows)
     _apply_duplicates(result.rows, db_keys)
+    rules = load_category_rules(db, identity)
+    _apply_category_mapping(result, rules)
 
     ok_rows = [r for r in result.rows if r.status == bill_import.STATUS_OK]
     if not ok_rows:
@@ -1373,9 +1400,9 @@ def commit_bill_import(db: Session, identity: Identity, raw: bytes, file_name: s
             BizExpense(
                 owner_uid=identity.uid,
                 kind=r.direction,
-                # 账单的「交易分类」直接当财务类别用：这样导入的数据能立刻
-                # 落在现有财务图表（按类别分组）里，而不是全堆进「未分类」。
-                category=(r.txn_type or "账单导入")[:64],
+                # 账单的「交易分类」先过一遍映射规则，命中则用自建类别；
+                # 未命中才退回平台原始分类（宁可保留原值，也不臆造一个类别）。
+                category=_final_category(r, result.platform, rules),
                 amount=r.amount,
                 occurred_on=r.txn_time,
                 note=" / ".join(dict.fromkeys(note_parts))[:500],
@@ -1600,3 +1627,129 @@ def export_expenses_xlsx(
     wb.save(buf)
     stamp = _today().replace("-", "")
     return buf.getvalue(), f"财务流水_{stamp}.xlsx"
+
+
+# ================================================================ 分类映射规则（v1.0.35）
+
+
+
+def load_category_rules(db: Session, identity: Identity) -> list[BizCategoryRule]:
+    """一次性取出启用的规则（导入时复用，避免逐行查库）。"""
+    return list(
+        db.scalars(
+            select(BizCategoryRule)
+            .where(BizCategoryRule.owner_uid == identity.uid, BizCategoryRule.enabled == 1)
+            .order_by(BizCategoryRule.priority.desc(), BizCategoryRule.id)
+        ).all()
+    )
+
+
+def match_category(raw: str, platform: str, rules: list) -> str:
+    """按规则把账单原始分类转成自建类别。
+
+    纯函数（不查库），便于单测，也便于导入时批量复用。
+    未命中**返回原值**而不是猜一个 —— 财务类别配错了会污染所有分类统计。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    # 自己按「priority 降序、id 升序」排序，不依赖调用方传进来的顺序 ——
+    # 顺序错了会让低优先级的规则抢先命中，分类结果就变得不可预期。
+    ordered = sorted(rules, key=lambda r: (-(r.priority or 0), r.id or 0))
+    for r in ordered:
+        if (r.platform or "") and r.platform != platform:
+            continue
+        pat = (r.pattern or "").strip()
+        if not pat:
+            continue
+        if (r.match_mode or "contains") == "exact":
+            if text == pat:
+                return r.target_category
+        elif pat in text:
+            return r.target_category
+    return text
+
+
+def list_category_rules(db: Session, identity: Identity) -> list[dict]:
+    rows = db.scalars(
+        select(BizCategoryRule)
+        .where(BizCategoryRule.owner_uid == identity.uid)
+        .order_by(BizCategoryRule.priority.desc(), BizCategoryRule.id)
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "platform": r.platform,
+            "pattern": r.pattern,
+            "matchMode": r.match_mode,
+            "targetCategory": r.target_category,
+            "priority": r.priority,
+            "enabled": bool(r.enabled),
+        }
+        for r in rows
+    ]
+
+
+def create_category_rule(db: Session, identity: Identity, body: dict) -> dict:
+    pattern = (body.get("pattern") or "").strip()[:64]
+    if not pattern:
+        raise required("原始分类关键词")
+    target = (body.get("targetCategory") or "").strip()[:64]
+    if not target:
+        raise required("目标类别")
+    mode = (body.get("matchMode") or "contains").strip()
+    if mode not in ("exact", "contains"):
+        raise bad_param("matchMode", "匹配方式只能是 exact（全等）或 contains（包含）")
+    row = BizCategoryRule(
+        owner_uid=identity.uid,
+        platform=(body.get("platform") or "").strip()[:16],
+        pattern=pattern,
+        match_mode=mode,
+        target_category=target,
+        priority=_opt_int(body.get("priority")) or 0,
+        enabled=1 if body.get("enabled", True) else 0,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "pattern": row.pattern, "targetCategory": row.target_category}
+
+
+def update_category_rule(db: Session, identity: Identity, rid: int, body: dict) -> dict:
+    row = db.scalar(
+        select(BizCategoryRule).where(
+            BizCategoryRule.id == rid, BizCategoryRule.owner_uid == identity.uid
+        )
+    )
+    if row is None:
+        raise not_found("分类映射规则", rid)
+    if "pattern" in body:
+        row.pattern = (body.get("pattern") or "").strip()[:64]
+    if "targetCategory" in body:
+        row.target_category = (body.get("targetCategory") or "").strip()[:64]
+    if "platform" in body:
+        row.platform = (body.get("platform") or "").strip()[:16]
+    if "matchMode" in body:
+        mode = (body.get("matchMode") or "").strip()
+        if mode not in ("exact", "contains"):
+            raise bad_param("matchMode", "匹配方式只能是 exact（全等）或 contains（包含）")
+        row.match_mode = mode
+    if "priority" in body:
+        row.priority = _opt_int(body.get("priority")) or 0
+    if "enabled" in body:
+        row.enabled = 1 if body.get("enabled") else 0
+    db.commit()
+    return {"ok": True, "id": rid}
+
+
+def delete_category_rule(db: Session, identity: Identity, rid: int) -> dict:
+    row = db.scalar(
+        select(BizCategoryRule).where(
+            BizCategoryRule.id == rid, BizCategoryRule.owner_uid == identity.uid
+        )
+    )
+    if row is None:
+        raise not_found("分类映射规则", rid)
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "id": rid}

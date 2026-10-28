@@ -188,6 +188,47 @@ def list_payment_methods(
     return {"items": _guard(service.list_payment_methods, db, identity)}
 
 
+# ---------------------------------------------------------------- 分类映射规则
+
+
+@router.get("/category-rules")
+def list_category_rules(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """账单分类映射规则列表（按优先级降序）。"""
+    return {"items": _guard(service.list_category_rules, db, identity)}
+
+
+@router.post("/category-rules")
+def create_category_rule(
+    body: dict,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """新增映射规则：平台原始分类 -> 自建类别。"""
+    return _guard(service.create_category_rule, db, identity, body)
+
+
+@router.patch("/category-rules/{rid}")
+def update_category_rule(
+    rid: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    return _guard(service.update_category_rule, db, identity, rid, body)
+
+
+@router.delete("/category-rules/{rid}")
+def delete_category_rule(
+    rid: int,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    return _guard(service.delete_category_rule, db, identity, rid)
+
+
 @router.get("/expenses/trend")
 def expense_trend(
     granularity: str = "month",

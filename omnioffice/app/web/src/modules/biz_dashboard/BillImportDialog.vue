@@ -261,6 +261,21 @@ const canCommit = computed(
         <el-table-column label="类型" width="90">
           <template #default="{ row }">{{ row.txnType || "—" }}</template>
         </el-table-column>
+        <el-table-column label="归入类别" width="100">
+          <template #default="{ row }">
+            <!-- 映射后类别：命中用户规则时与原始分类不同，用标签区分开；
+                 未命中规则时两者相同，就直接显示原始分类，不重复占位 -->
+            <el-tag
+              v-if="row.mappedCategory && row.mappedCategory !== row.txnType"
+              size="small"
+              effect="light"
+              type="success"
+            >
+              {{ row.mappedCategory }}
+            </el-tag>
+            <span v-else class="oo-text-secondary oo-text-xs">{{ row.mappedCategory || "—" }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="金额" width="100" align="right">
           <template #default="{ row }">
             <span class="oo-num">{{ row.amount === null ? "—" : money(row.amount) }}</span>

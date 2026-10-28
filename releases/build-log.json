@@ -151,5 +151,14 @@
     "fpk": "omnioffice_1.0.34_all_20261027.fpk",
     "commit": "efa4d33",
     "note": "财务管理 P0：收支趋势图 + 支付方式维度 + 时间筛选 + XLSX 导出（对标 Cashbook）"
+  },
+  {
+    "ts": "2026-10-28T10:05:28.877Z",
+    "appname": "omnioffice",
+    "version": "1.0.35",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.35_all_20261028.fpk",
+    "commit": "865acff",
+    "note": "财务升级为一级模块（流水明细/账单导入/趋势分析/分类与映射）+ 总览财务摘要卡片"
   }
 ]

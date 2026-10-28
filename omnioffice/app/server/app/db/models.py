@@ -518,6 +518,35 @@ class BizShare(Base):
 # ================================================================ 账号与数据隔离
 
 
+class BizCategoryRule(Base):
+    """账单分类映射规则（v1.0.35）。
+
+    为什么需要它：支付宝/微信导出的「交易分类」是**平台自己的口径**
+    （如「餐饮美食」「交通出行」），直接拿来当财务类别会得到一堆
+    和自建体系对不上的值。本表让用户配置「平台原始分类 → 我的类别」的转换。
+
+    - platform 为空表示**通用规则**（对所有平台生效）；
+    - match_mode: exact 全等 / contains 包含；
+    - 多条命中时按 priority 降序取第一条，priority 相同则 id 小的优先；
+    - enabled=0 的规则不参与匹配（可临时停用而不必删除）。
+    """
+
+    __tablename__ = "biz_category_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # alipay / wechat / unknown；空串 = 通用
+    platform: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    # 待匹配的原始分类文本
+    pattern: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    # exact（全等）| contains（包含）
+    match_mode: Mapped[str] = mapped_column(String(16), default="contains", nullable=False)
+    target_category: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    enabled: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class User(Base):
     """应用账号（注册登录 + 数据归属）。
 

@@ -100,6 +100,8 @@ class ParsedRow:
             "payer": self.raw.get("payer", ""),
             "payee": self.raw.get("payee", ""),
             "paymentMethod": self.payment_method,
+            # 映射后的最终类别（由 service 按用户规则算出，解析层不参与）
+            "mappedCategory": self.raw.get("mappedCategory", ""),
             "amount": float(self.amount) if self.amount is not None else None,
             "direction": self.direction,
             "orderNo": self.order_no,

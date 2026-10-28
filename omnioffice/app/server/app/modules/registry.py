@@ -62,8 +62,23 @@ MODULES: tuple[ModuleMeta, ...] = (
             ModuleTab("workload", "工作量"),
             ModuleTab("customer", "客户管理"),
             ModuleTab("trip", "出差与路径"),
-            ModuleTab("finance", "财务管理"),
             ModuleTab("share", "选择性分享"),
+        ),
+    ),
+    # v1.0.35：财务从「数据大屏」的一个 Tab 升为一级模块。
+    # 原因：财务的页面数量（流水/导入/分析/分类映射）已经装不进一个 Tab，
+    # 而它仍要与客户、出差、工时共享同一套数据 —— 所以拆**前端**模块、
+    # 共用**后端**数据层，不做成独立应用（那样联动要走跨应用同步）。
+    ModuleMeta(
+        id="finance",
+        display_name="财务",
+        icon="wallet",
+        route="/finance",
+        tabs=(
+            ModuleTab("flows", "流水明细"),
+            ModuleTab("import", "账单导入"),
+            ModuleTab("analysis", "趋势分析"),
+            ModuleTab("category", "分类与映射"),
         ),
     ),
 )

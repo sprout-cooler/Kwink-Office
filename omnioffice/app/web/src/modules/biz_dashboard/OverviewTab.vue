@@ -3,7 +3,8 @@
 import { computed, onMounted, ref } from "vue";
 import { bizApi, type BizOverview } from "@/api/biz-dashboard";
 import ChartBox from "./ChartBox.vue";
-import { OOCard, OOEmptyState, OOPageHeader, OOStatTile } from "@/components/ui";
+import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOStatTile } from "@/components/ui";
+import { useAppStore } from "@/stores/app";
 import {
   chartColor,
   chartPalette,
@@ -17,6 +18,13 @@ import {
 const overview = ref<BizOverview | null>(null);
 const loading = ref(true);
 const error = ref("");
+const store = useAppStore();
+
+/** 跳到「财务」一级模块的流水明细页。 */
+function goFinance() {
+  store.switchModule("finance");
+  store.switchTab("flows");
+}
 
 async function load() {
   loading.value = true;
@@ -260,11 +268,62 @@ const tripOption = computed(() => {
           description="在「客户管理」中新增客户后，这里会显示最近的客户档案"
         />
       </OOCard>
+
+      <!-- 财务摘要 + 跳转（v1.0.35）：财务已成为一级模块，这里留一张摘要卡，
+           避免「数据大屏里原本的财务管理 Tab」消失后，用户找不到入口。 -->
+      <OOCard title="财务摘要" subtitle="流水、账单导入与趋势分析都在「财务」模块" class="bz-fin-card">
+        <div class="bz-fin-rows">
+          <div class="bz-fin-row">
+            <span class="bz-fin-label">收入</span>
+            <span class="oo-num bz-fin-income">{{ money(overview?.totalIncome ?? 0) }}</span>
+          </div>
+          <div class="bz-fin-row">
+            <span class="bz-fin-label">支出</span>
+            <span class="oo-num bz-fin-expense">{{ money(overview?.totalExpense ?? 0) }}</span>
+          </div>
+          <div class="bz-fin-row">
+            <span class="bz-fin-label">净额</span>
+            <span class="oo-num">{{ money(overview?.balance ?? 0) }}</span>
+          </div>
+          <div class="bz-fin-row">
+            <span class="bz-fin-label">流水</span>
+            <span class="oo-num">{{ overview?.expenseRecords ?? 0 }} 条</span>
+          </div>
+        </div>
+        <el-button type="primary" class="bz-fin-go" @click="goFinance">
+          <OOIcon name="wallet" :size="15" style="margin-right: 5px; vertical-align: -2px" />
+          进入财务模块
+        </el-button>
+      </OOCard>
     </div>
   </div>
 </template>
 
 <style scoped>
+.bz-fin-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--oo-space-2);
+  margin-bottom: var(--oo-space-4);
+}
+.bz-fin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--oo-text-sm);
+}
+.bz-fin-label {
+  color: var(--oo-text-secondary);
+}
+.bz-fin-income {
+  color: var(--oo-success, var(--oo-text-primary));
+}
+.bz-fin-expense {
+  color: var(--oo-danger, var(--oo-text-primary));
+}
+.bz-fin-go {
+  width: 100%;
+}
 .bz-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(168px, 100%), 1fr));

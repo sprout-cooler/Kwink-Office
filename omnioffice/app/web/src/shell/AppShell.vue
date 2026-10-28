@@ -20,6 +20,7 @@ import { useAppStore } from "@/stores/app";
 import WeeklyReportPanel from "@/modules/weekly_report/WeeklyReportPanel.vue";
 import ImageToolPanel from "@/modules/image_tool/ImageToolPanel.vue";
 import BizDashboardPanel from "@/modules/biz_dashboard/BizDashboardPanel.vue";
+import FinancePanel from "@/modules/finance/FinancePanel.vue";
 import SettingsDrawer from "./SettingsDrawer.vue";
 import { OOEmptyState, OOIcon, OOThemeToggle } from "@/components/ui";
 
@@ -31,6 +32,7 @@ const panels: Record<string, unknown> = {
   weekly_report: WeeklyReportPanel,
   image_tool: ImageToolPanel,
   biz_dashboard: BizDashboardPanel,
+  finance: FinancePanel,
 };
 const activePanel = computed(() => panels[store.activeModuleId] ?? null);
 

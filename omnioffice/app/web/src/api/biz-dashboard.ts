@@ -133,6 +133,8 @@ export interface BillRow {
    *  交易方由这两列按收支方向推导，回传原始值供预览核对。 */
   payer?: string;
   payee?: string;
+  /** 按用户映射规则算出的最终类别；未命中规则时与原始分类相同 */
+  mappedCategory?: string;
 }
 
 export interface BillPreview {
@@ -160,6 +162,20 @@ export interface BillImportBatch {
   failedRows: number;
   amountTotal: number;
   createdAt: string;
+}
+
+/** 账单分类映射规则：平台原始分类 → 自建类别 */
+export interface BizCategoryRule {
+  id: number;
+  /** alipay / wechat / unknown；空串 = 通用规则 */
+  platform: string;
+  /** 待匹配的原始分类文本 */
+  pattern: string;
+  /** exact 全等 / contains 包含 */
+  matchMode: "exact" | "contains";
+  targetCategory: string;
+  priority: number;
+  enabled: boolean;
 }
 
 export interface BizTimeEntry {
@@ -412,6 +428,30 @@ export const bizApi = {
     api<{ id: number; removed: number }>(`/biz-dashboard/expenses/imports/${id}`, {
       method: "DELETE",
     }),
+
+  // ---- 分类映射规则（v1.0.35）----
+  listCategoryRules: () => api<{ items: BizCategoryRule[] }>("/biz-dashboard/category-rules"),
+  createCategoryRule: (body: {
+    platform?: string;
+    pattern: string;
+    matchMode: "exact" | "contains";
+    targetCategory: string;
+    priority?: number;
+    enabled?: boolean;
+  }) =>
+    api<{ id: number }>("/biz-dashboard/category-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateCategoryRule: (id: number, body: Partial<BizCategoryRule>) =>
+    api<{ ok: boolean }>(`/biz-dashboard/category-rules/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteCategoryRule: (id: number) =>
+    api<{ ok: boolean }>(`/biz-dashboard/category-rules/${id}`, { method: "DELETE" }),
 
   // ---- 工时台账 ----
   listTimeEntries: (customerId?: number) =>

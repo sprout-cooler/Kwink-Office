@@ -619,5 +619,177 @@ class TestExportXlsx(unittest.TestCase):
         self.assertEqual(ws.max_row, 1)  # 只有表头
 
 
+# ---- v1.0.35：分类映射规则 ----
+ALIPAY_CATEGORIES_CSV = (
+    "交易时间,交易分类,交易对方,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号\n"
+    "2024/7/1 10:00:00,餐饮美食,海底捞,聚餐,支出,356.00,余额宝,交易成功,MC001\n"
+    "2024/7/2 10:00:00,交通出行,滴滴,打车,支出,48.00,余额,交易成功,MC002\n"
+    "2024/7/3 10:00:00,服饰装扮,优衣库,买衣服,支出,299.00,余额,交易成功,MC003\n"
+    "2024/7/4 10:00:00,生活服务,理发,理发,支出,68.00,余额,交易成功,MC004\n"
+)
+
+
+def _rule(uid="u1", pattern="餐饮美食", target="餐饮", mode="contains",
+          priority=0, enabled=1, platform=""):
+    return models.BizCategoryRule(
+        owner_uid=uid, pattern=pattern, target_category=target, match_mode=mode,
+        priority=priority, enabled=enabled, platform=platform,
+    )
+
+
+class TestMatchCategory(unittest.TestCase):
+    """规则匹配：优先级、平台限定、模式、停用、未命中。"""
+
+    def test_contains_mode(self):
+        self.assertEqual(service.match_category("餐饮美食", "alipay", [_rule()]), "餐饮")
+
+    def test_exact_mode(self):
+        rules = [_rule(pattern="餐饮美食", target="餐饮", mode="exact")]
+        self.assertEqual(service.match_category("餐饮美食", "alipay", rules), "餐饮")
+        # exact 不应命中「餐饮美食外卖」
+        self.assertEqual(service.match_category("餐饮美食外卖", "alipay", rules), "餐饮美食外卖")
+
+    def test_contains_does_not_match_unrelated(self):
+        self.assertEqual(service.match_category("交通出行", "alipay", [_rule()]), "交通出行")
+
+    def test_higher_priority_wins(self):
+        rules = [
+            _rule(pattern="餐饮", target="工作餐", priority=1),
+            _rule(pattern="餐饮美食", target="餐饮", priority=10),
+        ]
+        self.assertEqual(service.match_category("餐饮美食", "alipay", rules), "餐饮")
+
+    def test_platform_specific_rule_skipped_for_other_platform(self):
+        rules = [_rule(pattern="餐饮美食", target="餐饮", platform="alipay")]
+        # 微信账单不套用支付宝专属规则
+        self.assertEqual(service.match_category("餐饮美食", "wechat", rules), "餐饮美食")
+        self.assertEqual(service.match_category("餐饮美食", "alipay", rules), "餐饮")
+
+    def test_common_rule_applies_to_all_platforms(self):
+        rules = [_rule(pattern="餐饮美食", target="餐饮", platform="")]
+        self.assertEqual(service.match_category("餐饮美食", "wechat", rules), "餐饮")
+
+    def test_unmatched_returns_original(self):
+        self.assertEqual(service.match_category("数码电器", "alipay", [_rule()]), "数码电器")
+
+    def test_empty_input(self):
+        self.assertEqual(service.match_category("", "alipay", [_rule()]), "")
+
+
+class TestCategoryRuleCrud(unittest.TestCase):
+    """规则 CRUD 与归属隔离。"""
+
+    def setUp(self):
+        self.db = _fresh_db()
+        self.uid = "u1"
+
+    def test_create_and_list(self):
+        service.create_category_rule(
+            self.db, _ident(self.uid),
+            {"pattern": "餐饮美食", "targetCategory": "餐饮", "matchMode": "contains", "priority": 5},
+        )
+        items = service.list_category_rules(self.db, _ident(self.uid))
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["targetCategory"], "餐饮")
+        self.assertEqual(items[0]["priority"], 5)
+
+    def test_list_isolated_by_owner(self):
+        service.create_category_rule(
+            self.db, _ident("u2"), {"pattern": "X", "targetCategory": "Y"}
+        )
+        self.assertEqual(len(service.list_category_rules(self.db, _ident(self.uid))), 0)
+
+    def test_disabled_rule_not_applied(self):
+        r = service.create_category_rule(
+            self.db, _ident(self.uid), {"pattern": "餐饮美食", "targetCategory": "餐饮"}
+        )
+        service.update_category_rule(self.db, _ident(self.uid), r["id"], {"enabled": False})
+        rules = service.load_category_rules(self.db, _ident(self.uid))
+        self.assertEqual(len(rules), 0)
+        self.assertEqual(service.match_category("餐饮美食", "alipay", rules), "餐饮美食")
+
+    def test_invalid_match_mode_rejected(self):
+        with self.assertRaises(BizDashboardError):
+            service.create_category_rule(
+                self.db, _ident(self.uid),
+                {"pattern": "A", "targetCategory": "B", "matchMode": "fuzzy"},
+            )
+
+    def test_missing_fields_rejected(self):
+        with self.assertRaises(BizDashboardError):
+            service.create_category_rule(self.db, _ident(self.uid), {"targetCategory": "B"})
+        with self.assertRaises(BizDashboardError):
+            service.create_category_rule(self.db, _ident(self.uid), {"pattern": "A"})
+
+    def test_update_and_delete(self):
+        r = service.create_category_rule(
+            self.db, _ident(self.uid), {"pattern": "A", "targetCategory": "B"}
+        )
+        service.update_category_rule(self.db, _ident(self.uid), r["id"], {"targetCategory": "C"})
+        self.assertEqual(service.list_category_rules(self.db, _ident(self.uid))[0]["targetCategory"], "C")
+        service.delete_category_rule(self.db, _ident(self.uid), r["id"])
+        self.assertEqual(len(service.list_category_rules(self.db, _ident(self.uid))), 0)
+
+    def test_cannot_touch_other_users_rule(self):
+        r = service.create_category_rule(
+            self.db, _ident("u2"), {"pattern": "A", "targetCategory": "B"}
+        )
+        with self.assertRaises(BizDashboardError):
+            service.update_category_rule(self.db, _ident(self.uid), r["id"], {"targetCategory": "X"})
+        with self.assertRaises(BizDashboardError):
+            service.delete_category_rule(self.db, _ident(self.uid), r["id"])
+
+
+class TestImportAppliesCategoryRules(unittest.TestCase):
+    """导入时按规则转换类别；预览要能看到转换结果。"""
+
+    def setUp(self):
+        self.db = _fresh_db()
+        self.uid = "u1"
+
+    def test_preview_shows_mapped_category(self):
+        service.create_category_rule(
+            self.db, _ident(self.uid),
+            {"pattern": "餐饮美食", "targetCategory": "餐饮", "platform": "alipay"},
+        )
+        p = service.preview_bill_import(
+            self.db, _ident(self.uid), ALIPAY_CATEGORIES_CSV.encode("utf-8"), "ali.csv"
+        )
+        mapped = {r["counterparty"]: r.get("mappedCategory") for r in p["rows"]}
+        self.assertEqual(mapped["海底捞"], "餐饮")
+        # 未命中规则的行保留平台原始分类
+        self.assertEqual(mapped["滴滴"], "交通出行")
+        self.assertEqual(mapped["优衣库"], "服饰装扮")
+
+    def test_commit_uses_mapped_category(self):
+        service.create_category_rule(
+            self.db, _ident(self.uid),
+            {"pattern": "餐饮美食", "targetCategory": "餐饮", "platform": "alipay"},
+        )
+        service.commit_bill_import(
+            self.db, _ident(self.uid), ALIPAY_CATEGORIES_CSV.encode("utf-8"), "ali.csv"
+        )
+        cats = {x["counterparty"]: x["category"] for x in service.list_expenses(self.db, _ident(self.uid))}
+        self.assertEqual(cats["海底捞"], "餐饮")
+        self.assertEqual(cats["滴滴"], "交通出行")
+
+    def test_no_rule_keeps_platform_category(self):
+        service.commit_bill_import(
+            self.db, _ident(self.uid), ALIPAY_CATEGORIES_CSV.encode("utf-8"), "ali.csv"
+        )
+        cats = {x["counterparty"]: x["category"] for x in service.list_expenses(self.db, _ident(self.uid))}
+        self.assertEqual(cats["海底捞"], "餐饮美食")
+
+    def test_other_users_rule_does_not_apply(self):
+        service.create_category_rule(
+            self.db, _ident("u2"), {"pattern": "餐饮美食", "targetCategory": "餐饮"}
+        )
+        service.commit_bill_import(
+            self.db, _ident(self.uid), ALIPAY_CATEGORIES_CSV.encode("utf-8"), "ali.csv"
+        )
+        cats = {x["counterparty"]: x["category"] for x in service.list_expenses(self.db, _ident(self.uid))}
+        self.assertEqual(cats["海底捞"], "餐饮美食")
+
+
 if __name__ == "__main__":
     unittest.main()

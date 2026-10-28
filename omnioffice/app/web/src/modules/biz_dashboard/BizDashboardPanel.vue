@@ -9,7 +9,6 @@ const OverviewTab = defineAsyncComponent(() => import("./OverviewTab.vue"));
 const WorkloadTab = defineAsyncComponent(() => import("./WorkloadTab.vue"));
 const CustomerTab = defineAsyncComponent(() => import("./CustomerTab.vue"));
 const TripTab = defineAsyncComponent(() => import("./TripTab.vue"));
-const FinanceTab = defineAsyncComponent(() => import("./FinanceTab.vue"));
 const ShareTab = defineAsyncComponent(() => import("./ShareTab.vue"));
 
 const panels: Record<string, unknown> = {
@@ -17,7 +16,6 @@ const panels: Record<string, unknown> = {
   workload: WorkloadTab,
   customer: CustomerTab,
   trip: TripTab,
-  finance: FinanceTab,
   share: ShareTab,
 };
 
