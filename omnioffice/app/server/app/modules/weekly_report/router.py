@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 
 from ...core.identity import Identity, get_identity
 from ...db.deps import get_db
-from ...db.models import ExportArtifact, Screenshot, TaskItem
+from ...db.models import ExportArtifact, Screenshot, TaskItem, WeeklyPendingFile
 from .constants import PARTITIONS
-from . import export_service, recognize_queue, review_service, service
+from . import export_service, merge_service, recognize_queue, review_service, service
 from .recognize_queue import MODULE_ID
 from .vlm import PROVIDER_PRESETS, build_recognizer
 
@@ -399,6 +399,127 @@ def trigger_export(
         "status": result.status,
         "error": result.error,
     }
+
+
+# ---------------------------------------------------------------- 待处理文件与合并（v1.0.35）
+
+
+@router.get("/pending-file")
+def get_pending_file(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """当前待处理文件的元信息（没有则 null）。"""
+    return {"item": merge_service.get_pending_file_meta(db, identity)}
+
+
+@router.post("/pending-file")
+async def upload_pending_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """上传待处理文件（xlsx）。已存在则**替换**——全库只保留一份。"""
+    data = await file.read()
+    return merge_service.save_pending_file(db, identity, file.filename or "", data)
+
+
+@router.delete("/pending-file")
+def delete_pending_file(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    return merge_service.delete_pending_file(db, identity)
+
+
+@router.get("/pending-file/download")
+def download_pending_file(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    p = merge_service.pending_file_path(db, identity)
+    if p is None:
+        raise HTTPException(
+            status_code=404, detail={"error": "NO_PENDING_FILE", "message": "还没有待处理文件"}
+        )
+    row = db.scalar(
+        select(WeeklyPendingFile).where(WeeklyPendingFile.owner_uid == identity.uid)
+    )
+    return FileResponse(
+        p,
+        filename=(row.file_name if row and row.file_name else p.name),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@router.post("/pending-file/merge")
+def merge_pending_file(
+    body: dict | None = None,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """执行导出，并把生成的 xlsx 追加为待处理文件的一个新工作表，同时就地替换原文件。
+
+    前置卡点：与导出一致的 export-readiness（低置信度未确认 / 时间解析失败会 409）。
+    每次合并前自动备份原文件，失败自动回滚。
+    """
+    body = body or {}
+    scope = str(body.get("scope") or "content")
+    dpi = int(body.get("dpi") or export_service.PNG_DPI)
+    render_png = bool(body.get("renderPng", True))
+
+    report = service.get_or_create_current_report(db, identity)
+    # 先确认有模板：没有模板时 export 会在填充阶段炸出 AttributeError，
+    # 那时用户看到的是「服务内部错误」，而真实原因只是「还没上传模板」。
+    if export_service.resolve_template(db, identity, report) is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "NO_TEMPLATE",
+                "message": "还没有可用的周报模板，请先到「预览与导出」上传并绑定模板",
+            },
+        )
+    ready = review_service.export_readiness(db, identity, report)
+    if not ready["ready"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "NOT_READY",
+                "message": "还有未处理的问题，暂时不能合并导出",
+                "reasons": ready["reasons"],
+            },
+        )
+
+    result = export_service.export_weekly_report(
+        db, identity, report, scope=scope, dpi=dpi, render_png=render_png
+    )
+    merged = merge_service.merge_report_into_pending(
+        db,
+        identity,
+        Path(result.xlsx_path).read_bytes(),
+        # 工作表名用「周期 + 周报」（如 2026-10-26 周报）而不是产物文件名 ——
+        # 后者往往超过 Excel 的 31 字符上限，会被截成「周报_devuser_2026-1...(2)」
+        # 这种看不懂的名字。
+        sheet_title_hint=f"{report.period_start} 周报",
+        batch_id=report.id,
+    )
+    return {
+        **merged,
+        "artifactId": result.artifact_id,
+        "xlsx": Path(result.xlsx_path).name,
+        "pngs": [Path(p).name for p in result.png_paths],
+        "status": result.status,
+        "error": result.error,
+    }
+
+
+@router.get("/merge-history")
+def merge_history(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(_require_identity),
+):
+    """合并历史记录。"""
+    return {"items": merge_service.list_merge_history(db, identity)}
 
 
 @router.get("/export-history")

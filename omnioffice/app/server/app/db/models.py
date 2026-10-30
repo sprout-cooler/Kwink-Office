@@ -547,6 +547,54 @@ class BizCategoryRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class WeeklyPendingFile(Base):
+    """周报待处理文件（v1.0.35）：用户自己的累计台账 xlsx。
+
+    只有**一份**（每用户一行）—— 合并后直接覆盖回同一路径，
+    这就是「自动替换现有待处理文件版本」的含义。
+
+    文件本体不入库（二进制塞库会拖垮备份与查询），只把元信息落到库里，
+    本体存在 DATA_DIR 下，升级时保留。
+    """
+
+    __tablename__ = "weekly_pending_files"
+    __table_args__ = (
+        UniqueConstraint("owner_uid", name="uq_weekly_pending_files_owner"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # 用户上传时的原始文件名
+    file_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # 文件本体路径（DATA_DIR 下）
+    stored_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 当前多少个工作表（合并后会 +1，用于 UI 展示）
+    sheet_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class WeeklyMergeRecord(Base):
+    """合并记录（v1.0.35）：每次合并留一条，便于追溯与提示「本期已合并」。
+
+    只存元信息，不存合并后的文件快照 —— 快照走 backup_path 指向的备份文件。
+    """
+
+    __tablename__ = "weekly_merge_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    batch_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    # 本次追加进去的工作表名
+    sheet_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    sheet_count_before: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sheet_count_after: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 合并前的备份，合并失败时用于回滚
+    backup_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class User(Base):
     """应用账号（注册登录 + 数据归属）。
 

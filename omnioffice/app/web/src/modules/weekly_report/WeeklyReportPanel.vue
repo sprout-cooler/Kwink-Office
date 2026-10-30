@@ -8,6 +8,7 @@ import ReviewTab from "./ReviewTab.vue";
 import SummaryTab from "./SummaryTab.vue";
 import ManualTab from "./ManualTab.vue";
 import ExportTab from "./ExportTab.vue";
+import MergeTab from "./MergeTab.vue";
 
 const props = defineProps<{ tab: string }>();
 
@@ -18,6 +19,7 @@ const PANELS: Record<string, unknown> = {
   summary: SummaryTab,
   manual: ManualTab,
   export: ExportTab,
+  merge: MergeTab,
 };
 
 const activePanel = computed(() => PANELS[props.tab] ?? null);

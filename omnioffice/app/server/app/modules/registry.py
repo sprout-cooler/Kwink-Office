@@ -36,6 +36,7 @@ MODULES: tuple[ModuleMeta, ...] = (
             ModuleTab("summary", "工作汇总"),
             ModuleTab("manual", "手工补充"),
             ModuleTab("export", "预览与导出"),
+            ModuleTab("merge", "合并周报"),
         ),
     ),
     ModuleMeta(

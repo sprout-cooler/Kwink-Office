@@ -1,4 +1,4 @@
-import { API_BASE, gatewayPrefix, ApiError, api } from "./client";
+import { API_BASE, gatewayPrefix, ApiError, api, downloadFile } from "./client";
 
 export type PartitionId = "offline_done" | "online_done" | "plan";
 
@@ -25,6 +25,38 @@ export interface ScreenshotItem {
   taskCount: number;
   /** DB 记录在但原图文件已丢失（历史升级遗留），需清理重传 */
   fileMissing?: boolean;
+}
+
+/** 周报待处理文件（用户自己的累计台账 xlsx，全库只保留一份） */
+export interface PendingFileMeta {
+  fileName: string;
+  sizeBytes: number;
+  sheetCount: number;
+  updatedAt: string;
+}
+
+/** 合并记录 */
+export interface MergeRecord {
+  id: number;
+  sheetName: string;
+  sheetCountBefore: number;
+  sheetCountAfter: number;
+  backupName: string;
+  createdAt: string;
+}
+
+/** 合并结果 */
+export interface MergeOutcome {
+  sheetName: string;
+  sheetCountBefore: number;
+  sheetCountAfter: number;
+  backupName: string;
+  mergedAt: string;
+  artifactId?: number;
+  xlsx?: string;
+  pngs?: string[];
+  status?: string;
+  error?: string;
 }
 
 export interface UploadResult {
@@ -528,4 +560,40 @@ export const weeklyApi = {
     const r = await api<{ items: ArtifactItem[] }>("/weekly-report/artifacts");
     return r.items;
   },
+
+  // ---- 待处理文件与合并（v1.0.35）----
+  pendingFile: () => api<{ item: PendingFileMeta | null }>("/weekly-report/pending-file"),
+
+  mergeHistory: () => api<{ items: MergeRecord[] }>("/weekly-report/merge-history"),
+
+  deletePendingFile: () => api("/weekly-report/pending-file", { method: "DELETE" }),
+
+  downloadPendingFile: () => downloadFile("/weekly-report/pending-file/download", "待处理文件.xlsx"),
+
+  async mergeIntoPending(opts: { scope: "content" | "full"; dpi: number; renderPng: boolean }) {
+    return api<MergeOutcome>("/weekly-report/pending-file/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+  },
+
+  async uploadPendingFile(file: File): Promise<PendingFileMeta> {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/weekly-report/pending-file`, { method: "POST", body: form });
+    if (!res.ok) {
+      let msg = `待处理文件上传失败（HTTP ${res.status}）`;
+      try {
+        const b = await res.json();
+        msg = b?.detail?.message ?? msg;
+      } catch {
+        /* 非 JSON 错误体就用默认文案 */
+      }
+      throw new ApiError("HTTP_ERROR", msg, res.status);
+    }
+    const body = await res.json();
+    return (body.item ?? body) as PendingFileMeta;
+  },
+
 };

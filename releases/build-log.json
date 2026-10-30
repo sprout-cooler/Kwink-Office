@@ -160,5 +160,14 @@
     "fpk": "omnioffice_1.0.35_all_20261028.fpk",
     "commit": "865acff",
     "note": "财务升级为一级模块（流水明细/账单导入/趋势分析/分类与映射）+ 总览财务摘要卡片"
+  },
+  {
+    "ts": "2026-10-30T17:43:09.166Z",
+    "appname": "omnioffice",
+    "version": "1.0.36",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.36_all_20261030.fpk",
+    "commit": "61fbaa6",
+    "note": "周报新增「合并周报」：待处理文件上传/替换/持久化 + 一键合并周报为新工作表"
   }
 ]
