@@ -24,6 +24,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from copy import copy
 from datetime import date, datetime, timedelta, timezone
@@ -183,10 +184,25 @@ def _validate_upload(file_name: str, data: bytes) -> None:
 
 
 def save_pending_file(db: Session, identity: Identity, file_name: str, data: bytes) -> dict:
-    """上传待处理文件；已存在则**替换**——全库对每个用户只保留一份。"""
+    """上传待处理文件；已存在则**替换**——全库对每个用户只保留一份。
+
+    内容与当前文件**完全一致**时短路：不重复解析、不重复写盘，直接返回现有元信息
+    （unchanged=True）。用户误传同一个文件很常见，没必要再占一次磁盘与 IO。
+    """
     _validate_upload(file_name, data)
 
     from openpyxl import load_workbook
+
+    digest = hashlib.md5(data).hexdigest()
+    row = db.scalar(
+        select(WeeklyPendingFile).where(WeeklyPendingFile.owner_uid == identity.uid)
+    )
+    if row is not None and (row.md5 or "") == digest:
+        stored = Path(row.stored_path)
+        if stored.is_file():
+            meta = get_pending_file_meta(db, identity) or {}
+            meta["unchanged"] = True
+            return meta
 
     wb = load_workbook(BytesIO(data))
     root = pending_root()
@@ -198,9 +214,6 @@ def save_pending_file(db: Session, identity: Identity, file_name: str, data: byt
     wb.save(tmp)
     tmp.replace(target)
 
-    row = db.scalar(
-        select(WeeklyPendingFile).where(WeeklyPendingFile.owner_uid == identity.uid)
-    )
     if row is None:
         row = WeeklyPendingFile(owner_uid=identity.uid)
         db.add(row)
@@ -208,6 +221,7 @@ def save_pending_file(db: Session, identity: Identity, file_name: str, data: byt
     row.stored_path = str(target)
     row.size_bytes = len(data)
     row.sheet_count = len(wb.sheetnames)
+    row.md5 = digest
     db.commit()
     return get_pending_file_meta(db, identity) or {}
 

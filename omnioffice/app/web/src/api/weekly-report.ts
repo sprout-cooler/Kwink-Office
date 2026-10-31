@@ -33,6 +33,8 @@ export interface PendingFileMeta {
   sizeBytes: number;
   sheetCount: number;
   updatedAt: string;
+  /** true = 内容与当前文件完全一致，服务端未重复写盘 */
+  unchanged?: boolean;
 }
 
 /** 合并记录 */
@@ -578,22 +580,48 @@ export const weeklyApi = {
     });
   },
 
-  async uploadPendingFile(file: File): Promise<PendingFileMeta> {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch(`${API_BASE}/weekly-report/pending-file`, { method: "POST", body: form });
-    if (!res.ok) {
-      let msg = `待处理文件上传失败（HTTP ${res.status}）`;
-      try {
-        const b = await res.json();
-        msg = b?.detail?.message ?? msg;
-      } catch {
-        /* 非 JSON 错误体就用默认文案 */
-      }
-      throw new ApiError("HTTP_ERROR", msg, res.status);
-    }
-    const body = await res.json();
-    return (body.item ?? body) as PendingFileMeta;
+  async uploadPendingFile(file: File, onProgress?: (percent: number) => void): Promise<PendingFileMeta> {
+    // 用 XHR 而非 fetch：fetch 拿不到上传进度（fetch 没有 upload progress 事件），
+    // 没有进度条用户就会以为没上传成功、反复点，白白浪费带宽与服务端磁盘。
+    // 与截图上传（weeklyApi.upload）保持同一套写法。
+    return new Promise((resolve, reject) => {
+      const form = new FormData();
+      form.append("file", file);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API_BASE}/weekly-report/pending-file`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve((body.item ?? body) as PendingFileMeta);
+          } else {
+            reject(
+              new ApiError(
+                body?.detail?.error ?? "HTTP_ERROR",
+                body?.detail?.message ?? `上传失败（HTTP ${xhr.status}）`,
+                xhr.status,
+              ),
+            );
+          }
+        } catch {
+          reject(
+            new ApiError(
+              "BAD_RESPONSE",
+              "上传返回了非 JSON 内容，可能登录已失效——请刷新页面重新登录飞牛账号",
+              xhr.status,
+            ),
+          );
+        }
+      };
+      xhr.onerror = () => reject(new ApiError("NETWORK", "网络不可达：请确认应用已启动后重试"));
+      xhr.onabort = () => reject(new ApiError("ABORTED", "上传已取消"));
+      xhr.send(form);
+    });
   },
 
 };

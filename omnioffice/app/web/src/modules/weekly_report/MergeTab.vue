@@ -11,7 +11,7 @@
  *   所以先备份、失败自动回滚，并把备份名展示给用户。
  */
 import { computed, onMounted, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
   weeklyApi,
   type MergeRecord,
@@ -30,6 +30,10 @@ const meta = ref<PendingFileMeta | null>(null);
 const history = ref<MergeRecord[]>([]);
 const loading = ref(false);
 const uploading = ref(false);
+/** 上传进度 0~100 —— 没有它用户会以为没上传成功，反复点，白白浪费带宽与磁盘 */
+const uploadPercent = ref(0);
+const uploadFileName = ref("");
+const fileInput = ref<HTMLInputElement | null>(null);
 const merging = ref(false);
 const error = ref("");
 
@@ -52,17 +56,66 @@ async function load() {
 }
 onMounted(load);
 
-async function onPick(uploadFile: { raw?: File }) {
-  const raw = uploadFile?.raw;
-  if (!raw) return;
+/** 打开系统文件选择器 */
+function pickFile() {
+  if (uploading.value) return;
+  fileInput.value?.click();
+}
+
+/** 原生 input 的 change：这里拿到的一定是用户刚选的文件 */
+function onFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const raw = input.files?.[0];
+  // 立刻清空：否则重新选择**同一个文件**不会再触发 change（替换场景就失效了）
+  input.value = "";
+  if (raw) void onPick(raw);
+}
+
+/** 拖拽上传 */
+function onDrop(e: DragEvent) {
+  if (uploading.value) return;
+  const raw = e.dataTransfer?.files?.[0];
+  if (raw) void onPick(raw);
+}
+
+async function onPick(raw: File) {
+  // 防重复：正在上传时忽略后续选择（用户可能连点或拖了多个文件）
+  if (uploading.value) return;
+
+  // 替换前先确认：待处理文件只保留一份，传错了就没了
+  if (hasFile.value) {
+    try {
+      await ElMessageBox.confirm(
+        `当前已有待处理文件「${meta.value?.fileName || "待处理文件"}」，上传「${raw.name}」会**替换**它。`,
+        "确认替换？",
+        { type: "warning", confirmButtonText: "替换", cancelButtonText: "取消" },
+      );
+    } catch {
+      return; // 用户取消，不动现有文件
+    }
+  }
+
   uploading.value = true;
+  uploadPercent.value = 0;
+  uploadFileName.value = raw.name;
   error.value = "";
+  const replacing = hasFile.value;
   try {
-    await weeklyApi.uploadPendingFile(raw);
-    ElMessage.success(`待处理文件「${raw.name}」已上传${meta.value ? "（已替换原文件）" : ""}`);
+    const res = await weeklyApi.uploadPendingFile(raw, (p) => {
+      uploadPercent.value = p;
+    });
+    uploadPercent.value = 100;
+    if (res.unchanged) {
+      // 服务端发现内容与当前文件完全一致，没重复写盘 —— 如实告诉用户，
+      // 别让他以为上传没生效又去重传一次
+      ElMessage.info("内容与当前待处理文件完全相同，未重复写入");
+    } else {
+      ElMessage.success(`待处理文件「${raw.name}」已上传${replacing ? "（已替换原文件）" : ""}`);
+    }
     await load();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+    ElMessage.error(`上传失败：${error.value}`);
   } finally {
     uploading.value = false;
   }
@@ -145,13 +198,43 @@ const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString("zh-CN") : 
       flush
     >
       <div class="pad">
-        <el-upload drag :auto-upload="false" :show-file-list="false" accept=".xlsx" :on-change="onPick">
-          <div class="drop">
-            <OOIcon name="upload" :size="26" />
-            <p class="drop-main">把待处理文件拖到这里，或点击选择</p>
-            <p class="drop-sub">支持 .xlsx，重新上传将替换现有文件</p>
+        <!-- 上传区：自实现（不依赖 el-upload 的 on-change 事件）。
+             原因：实测本场景下 el-upload 的 on-change 不触发（文件已进 input.files
+             但回调没来），原生 input 的 change 最可靠；进度、禁用、防重复也更好控。 -->
+        <div
+          class="drop"
+          :class="{ busy: uploading }"
+          @click="pickFile"
+          @dragover.prevent
+          @drop.prevent="onDrop"
+        >
+          <OOIcon name="upload" :size="26" />
+          <p class="drop-main">{{ uploading ? "正在上传…" : "把待处理文件拖到这里，或点击选择" }}</p>
+          <p class="drop-sub">支持 .xlsx，重新上传将替换现有文件</p>
+          <input
+            ref="fileInput"
+            type="file"
+            accept=".xlsx"
+            class="drop-input"
+            @change="onFilePicked"
+          />
+        </div>
+
+        <!-- 上传进度：让用户明确看到「传了多少、传完没有」。
+             没有它，用户看不到反馈就会以为没上传成功、反复点，白白浪费带宽与磁盘。 -->
+        <div v-if="uploading" class="up-prog">
+          <div class="up-prog-head">
+            <span class="up-prog-name">{{ uploadFileName }}</span>
+            <span class="up-prog-num">{{ uploadPercent }}%</span>
           </div>
-        </el-upload>
+          <el-progress
+            :percentage="uploadPercent"
+            :stroke-width="8"
+            :show-text="false"
+            :status="uploadPercent >= 100 ? 'success' : undefined"
+          />
+          <p class="up-prog-tip">上传中，请勿重复操作或关闭窗口</p>
+        </div>
 
         <div v-if="hasFile" class="cur">
           <div class="cur-row">
@@ -260,8 +343,7 @@ const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString("zh-CN") : 
   padding: var(--oo-space-4);
 }
 /* 拖拽区默认不会撑满容器，左右会留一截空白 —— 显式撑满更整齐 */
-.pad :deep(.el-upload),
-.pad :deep(.el-upload-dragger) {
+.pad .drop {
   width: 100%;
 }
 .drop {
@@ -271,6 +353,21 @@ const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString("zh-CN") : 
   gap: var(--oo-space-2);
   padding: var(--oo-space-4);
   color: var(--oo-text-secondary);
+  border: 1px dashed var(--oo-border-default);
+  border-radius: var(--oo-radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.drop:hover {
+  border-color: var(--oo-brand);
+  background: var(--oo-brand-soft);
+}
+.drop.busy {
+  cursor: progress;
+  opacity: 0.65;
+}
+.drop-input {
+  display: none;
 }
 .drop-main {
   margin: 0;
@@ -280,6 +377,36 @@ const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString("zh-CN") : 
 }
 .drop-sub {
   margin: 0;
+  font-size: var(--oo-text-xs);
+  color: var(--oo-text-tertiary);
+}
+.up-prog {
+  margin-top: var(--oo-space-3);
+  padding: var(--oo-space-3);
+  border-radius: var(--oo-radius-md);
+  background: var(--oo-bg-surface-2);
+}
+.up-prog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--oo-space-3);
+  margin-bottom: var(--oo-space-2);
+  font-size: var(--oo-text-sm);
+}
+.up-prog-name {
+  color: var(--oo-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.up-prog-num {
+  color: var(--oo-brand);
+  font-weight: var(--oo-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.up-prog-tip {
+  margin: var(--oo-space-2) 0 0;
   font-size: var(--oo-text-xs);
   color: var(--oo-text-tertiary);
 }

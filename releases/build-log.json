@@ -178,5 +178,14 @@
     "fpk": "omnioffice_1.0.37_all_20261031.fpk",
     "commit": "81a3f0f",
     "note": "合并周报：新增工作表名改为阶段时间区间（如 261026-261030）"
+  },
+  {
+    "ts": "2026-10-31T02:04:05.554Z",
+    "appname": "omnioffice",
+    "version": "1.0.38",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.38_all_20261031.fpk",
+    "commit": "d02ab2f",
+    "note": "待处理文件上传增加进度条 + 防重复上传 + 相同内容免重写"
   }
 ]

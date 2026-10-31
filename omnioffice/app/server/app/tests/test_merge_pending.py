@@ -100,6 +100,26 @@ class TestUploadValidation(unittest.TestCase):
         total = self.db.scalar(select(func.count()).select_from(WeeklyPendingFile))
         self.assertEqual(total, 1)
 
+    def test_same_content_is_short_circuited(self):
+        """内容完全相同 → 不重复写盘（unchanged=True），省磁盘与 IO。"""
+        data = _xlsx({"A": [["a"]]})
+        first = merge_service.save_pending_file(self.db, _ident(), "台账.xlsx", data)
+        self.assertFalse(first.get("unchanged"))
+
+        path = merge_service.pending_file_path(self.db, _ident())
+        before = path.stat().st_mtime_ns
+
+        again = merge_service.save_pending_file(self.db, _ident(), "台账.xlsx", data)
+        self.assertTrue(again.get("unchanged"), "相同内容应短路，不重复写入")
+        self.assertEqual(path.stat().st_mtime_ns, before, "文件不应被重写")
+
+    def test_different_content_is_written(self):
+        merge_service.save_pending_file(self.db, _ident(), "台账.xlsx", _xlsx({"A": [["a"]]}))
+        meta = merge_service.save_pending_file(
+            self.db, _ident(), "台账.xlsx", _xlsx({"A": [["b"]]})
+        )
+        self.assertFalse(meta.get("unchanged"))
+
 
 class TestMergeIntoPending(unittest.TestCase):
     def setUp(self):

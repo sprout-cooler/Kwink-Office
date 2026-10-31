@@ -569,6 +569,8 @@ class WeeklyPendingFile(Base):
     # 文件本体路径（DATA_DIR 下）
     stored_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 内容 md5：上传**同一份**文件时据此短路，不重复写盘（用户误传同一个文件很常见）
+    md5: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     # 当前多少个工作表（合并后会 +1，用于 UI 展示）
     sheet_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
