@@ -497,10 +497,9 @@ def merge_pending_file(
         db,
         identity,
         Path(result.xlsx_path).read_bytes(),
-        # 工作表名用「周期 + 周报」（如 2026-10-26 周报）而不是产物文件名 ——
-        # 后者往往超过 Excel 的 31 字符上限，会被截成「周报_devuser_2026-1...(2)」
-        # 这种看不懂的名字。
-        sheet_title_hint=f"{report.period_start} 周报",
+        # 工作表名按**阶段时间区间**命名（如 261026-261030），
+        # 便于台账按时间轴排列与检索。
+        sheet_title_hint=merge_service.period_sheet_title(report.period_start),
         batch_id=report.id,
     )
     return {

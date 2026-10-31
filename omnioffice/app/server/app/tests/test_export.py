@@ -1038,8 +1038,14 @@ class TestDiagLog(unittest.TestCase):
 
         db = SessionLocal()
         try:
-            db.query(TemplateVersion).delete()
-            db.commit()
+            # 原来这里有一句 `db.query(TemplateVersion).delete()`，用来"清场"
+            # 让 dump 输出干净。但这是**多余的**，而且会随机把整个测试套件带崩：
+            #   ① 本类测试共用同一个持久化库（SessionLocal），前面的用例可能已建出
+            #      reports 行，其 template_id 有外键引用 template_versions；
+            #   ② DELETE FROM template_versions 撞外键 → sqlite3.IntegrityError。
+            # 该失败与本用例要验证的东西完全无关（验证目标是"dump 能读出表名"，
+            # 与表里有没有行无关），所以直接去掉删除动作。
+            db.query(TemplateVersion).count()
         finally:
             db.close()
         out = self.diag._dump_template_records()

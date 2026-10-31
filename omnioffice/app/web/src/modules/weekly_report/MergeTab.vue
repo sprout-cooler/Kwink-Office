@@ -212,7 +212,7 @@ const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString("zh-CN") : 
             <span class="oo-btn-icon"><OOIcon name="merge" :size="16" /></span>
             {{ hasFile ? "合并并导出" : "请先上传待处理文件" }}
           </el-button>
-          <span class="opt-hint">合并会用本期周报在工作簿里新增一个工作表，并覆盖保存原文件</span>
+          <span class="opt-hint">合并会在工作簿里新增一个以阶段时间命名的工作表（如 261026-261030），并覆盖保存原文件</span>
         </div>
 
         <p v-if="!hasFile" class="tip">

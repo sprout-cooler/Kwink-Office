@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from copy import copy
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -59,6 +59,27 @@ _SHEET_MAX = 31
 KEEP_BACKUPS = 5
 # 待处理文件大小上限（MB）
 MAX_PENDING_MB = 10
+
+# 合并后新工作表名的**阶段终点**偏移天数（相对周期周一）。
+# 0=周一 … 4=周五（工作周）、6=周日（自然周）。
+#
+# ⚠️ 与既有语义不一致，刻意为之：周报模板含周一~周日 7 个星期块
+#    （anchors.weekdays），产物文件名 report_display_name 用的也是 +6（到周日）。
+#    但台账按**工作日**归档更贴近实际使用（周末基本不填周报），
+#    用户也明确要求「2026-10-26 开始的，结束就是 2026-10-30」。
+#    若以后要把周末计入，把这个值改成 6 即可。
+PERIOD_END_OFFSET_DAYS = 4
+
+
+def period_sheet_title(period_start: str) -> str:
+    """周报周期 → 阶段时间区间名，如 261026-261030。
+
+    起点是周期周一（report.period_start），终点见 PERIOD_END_OFFSET_DAYS。
+    只用数字与连字符：Excel 工作表名不能含 : \\ / ? * [ ]，而这种格式也最短最好认。
+    """
+    start = date.fromisoformat((period_start or "").strip())
+    end = start + timedelta(days=PERIOD_END_OFFSET_DAYS)
+    return f"{start:%y%m%d}-{end:%y%m%d}"
 
 
 def pending_root() -> Path:

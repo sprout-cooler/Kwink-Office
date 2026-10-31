@@ -177,6 +177,36 @@ class TestMergeIntoPending(unittest.TestCase):
         self.assertTrue(any(str(r) == "A1:B1" for r in out.merged_cells.ranges))
 
 
+class TestPeriodSheetTitle(unittest.TestCase):
+    """工作表名 = 阶段时间区间（如 261026-261030）。"""
+
+    def test_monday_to_friday(self):
+        # 2026-10-26 是周一
+        self.assertEqual(merge_service.period_sheet_title("2026-10-26"), "261026-261030")
+
+    def test_crosses_month_boundary(self):
+        # 2026-10-30 周五起的那一周 → 跨月
+        self.assertEqual(merge_service.period_sheet_title("2026-10-30"), "261030-261103")
+
+    def test_crosses_year_boundary(self):
+        # 2026-12-28 周一 + 4 天 = 2027-01-01（周五）
+        self.assertEqual(merge_service.period_sheet_title("2026-12-28"), "261228-270101")
+
+    def test_name_is_legal_for_excel(self):
+        """Excel 工作表名不能含 : \\ / ? * [ ]，也不能超 31 字符。"""
+        name = merge_service.period_sheet_title("2026-10-26")
+        self.assertNotRegex(name, r"[\\/?*\[\]:]")
+        self.assertLessEqual(len(name), 31)
+
+    def test_merge_uses_period_title(self):
+        db = _fresh_db()
+        merge_service.save_pending_file(db, _ident(), "台账.xlsx", _xlsx({"1月": [["a"]]}))
+        merged = merge_service.merge_report_into_pending(
+            db, _ident(), _xlsx({"s": [["b"]]}), merge_service.period_sheet_title("2026-10-26")
+        )
+        self.assertEqual(merged["sheetName"], "261026-261030")
+
+
 class TestIsolation(unittest.TestCase):
     def setUp(self):
         self.db = _fresh_db()
