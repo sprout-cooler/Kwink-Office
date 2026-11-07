@@ -19,12 +19,17 @@ from __future__ import annotations
 
 import shutil
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from openpyxl import load_workbook
 
-from app.modules.weekly_report.anchors import DEFAULT_ANCHORS, AnchorError, validate_template
+from app.modules.weekly_report.anchors import (
+    DATE_NUMBER_FORMAT,
+    DEFAULT_ANCHORS,
+    AnchorError,
+    validate_template,
+)
 from app.modules.weekly_report.fill import FillItem, excel_serial, fill_weekly_report
 
 FIXTURE = Path(__file__).parent / "fixtures" / "template_weekly.xlsx"
@@ -100,16 +105,33 @@ class TestFillOnRealTemplate(unittest.TestCase):
         plan = fill_weekly_report(ws, items, PERIOD, summary_counts=summary)
         return ws, plan
 
-    def test_serial_written_without_touching_format(self):
-        """写入新周期序列号，且 number_format 仍为 General。"""
+    def test_serial_written_with_date_format(self):
+        """写入新周期序列号，且 number_format 为用户要求的自定义日期格式。
+
+        v1.0.41 变更：真实模板的 C 列 number_format 是 General，
+        写进去的序列号在 **Excel** 里显示成裸数字「46328」（用户实报），
+        只有 LibreOffice 渲染的 PNG 才自动猜成短日期 —— 造成
+        「PNG 好看、xlsx 难看」的割裂，合并进待处理文件后同样如此。
+        现在显式设 m"月"d"日"（用户截图指定的格式），显示「11月2日」。
+
+        落盘仍是**数字**（t="n"），不是文本 —— V10「不得写文本」不受影响。
+        """
         ws, _ = self._fill([])
         ps = date(2026, 10, 12)
         for i in range(7):
             r = 3 + i * 2
             c = ws[f"C{r}"]
-            self.assertIsInstance(c.value, int)
-            self.assertEqual(c.value, excel_serial(ps + timedelta(days=i)))
-            self.assertEqual(c.number_format, "General", "填充不得改写 C 列数字格式")
+            self.assertEqual(c.number_format, DATE_NUMBER_FORMAT)
+            self.assertIn("月", c.number_format)
+            self.assertIn("日", c.number_format)
+            # 读回的值可能是 datetime（openpyxl 按日期格式反解），
+            # 也可能是序列号 int（未反解时）—— 两者都必须对应正确日期。
+            expected = ps + timedelta(days=i)
+            v = c.value
+            if isinstance(v, datetime):
+                self.assertEqual(v.date(), expected)
+            else:
+                self.assertEqual(v, excel_serial(expected))
 
     def test_sample_content_cleared(self):
         """模板样例内容必须被清空，不与新数据混排。"""

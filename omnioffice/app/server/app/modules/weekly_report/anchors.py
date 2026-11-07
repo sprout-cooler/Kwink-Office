@@ -42,6 +42,7 @@ MERGE_COLUMNS = (COL_LABEL, COL_DATE, COL_CONTENT, COL_ISSUE, COL_SOLUTION)
 # Excel 日期序列号基准（Windows 1900 日期系统，含著名的 1900 闰年 bug 偏移）
 EXCEL_EPOCH_DATE = None  # 由 excel_serial() 内联实现，避免在此处 import datetime 造成循环
 FIRST_DATA_ROW = 3       # 第一个星期块起始行
+HEADER_ROW = 2            # 表头行（「时间」「工作内容」「遇到的问题」「解决办法」）
 WEEKDAY_COUNT = 7
 ROWS_PER_WEEKDAY = 2
 LAST_WEEKDAY_ROW = FIRST_DATA_ROW + WEEKDAY_COUNT * ROWS_PER_WEEKDAY - 1  # = 16
@@ -56,6 +57,22 @@ PLAN_ROW_1 = 23
 PLAN_ROW_2 = 26           # 下周计划 4 条：D23:F26
 
 TOTAL_ROWS = 26
+
+# C 列日期单元格的自定义数字格式（v1.0.41）。
+#
+# 为什么需要它（实测得出，不是猜）：
+#   模板里 C 列日期是**裸序列号**（46230~46236），number_format 为 General。
+#   写进去的也是 int 序列号 → 在 **Excel** 里直接显示「46328」这种数字，
+#   用户完全看不懂；只有在 **LibreOffice 渲染的 PNG** 里才被自动猜成
+#   「11/2/2026」（短日期），于是出现「PNG 好看、xlsx 难看」的割裂。
+#   合并进待处理文件后同样显示裸数字（用户实报）。
+#
+#   用户明确要求（截图为 Excel「设置单元格格式 → 自定义」）：
+#   格式代码 m"月"d"日" → 显示「11月2日」。
+#
+# 格式代码里的引号是 Excel 自定义格式的**字面量转义**：
+#   m"月"d"日"  →  月字与日字作为普通文字显示，m/d 仍是日期占位符。
+DATE_NUMBER_FORMAT = 'm"月"d"日"'
 
 
 @dataclass(frozen=True)

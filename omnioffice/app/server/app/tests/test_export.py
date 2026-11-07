@@ -18,6 +18,7 @@ import io
 import os
 import shutil
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -490,11 +491,22 @@ class TestExportFlow(ExportTestBase):
         art = self.db.query(ExportArtifact).one()
         ws = load_workbook(art.xlsx_path).active
         # 2026-10-12 的 Excel 序列号（1899-12-30 基准）
-        from datetime import date as _d
+        from datetime import date as _date
 
         from app.modules.weekly_report.fill import excel_serial
 
-        self.assertEqual(ws["C3"].value, excel_serial(_d(2026, 10, 12)))
+        # C3 是日期格式单元格：openpyxl 读取时会按格式反解成 datetime/date，
+        # 未反解时才是序列号 int —— 三种都指向同一天。
+        c3 = ws["C3"].value
+        expected_day = _date(2026, 10, 12)
+        if isinstance(c3, datetime):
+            self.assertEqual(c3.date(), expected_day)
+        elif isinstance(c3, _date):
+            self.assertEqual(c3, expected_day)
+        else:
+            self.assertEqual(c3, excel_serial(expected_day))
+        # 且必须带用户要求的自定义日期格式（v1.0.41：Excel 里不再显示裸序列号）
+        self.assertIn("月", ws["C3"].number_format)
         found = [ws[f"D{r}"].value for r in range(3, 20)]
         self.assertIn("新任务X", found)
         # 模板样例应已清空

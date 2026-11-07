@@ -265,13 +265,22 @@ class TestDateSerialWritten(unittest.TestCase):
             self.assertEqual(v, excel_serial(ps.replace(day=12) + __import__("datetime").timedelta(days=i)))
 
     def test_date_format_preserved(self):
+        """C 列必须是**日期格式**（v1.0.41 起显式设为用户要求的自定义格式）。
+
+        历史：v1.0.40 及之前只断言「格式里含 y」（即保留模板原格式），
+        但模板原格式可能是 General → Excel 里显示裸序列号 46328，用户实报。
+        现在统一断言：既含日期占位符，又是用户要求的自定义格式 m"月"d"日"。
+        """
         wb = make_template()
         ws = wb.active
         fill_weekly_report(ws, [], PERIOD)
         for i in range(7):
             r = 3 + i * 2
             fmt = ws[f"C{r}"].number_format
-            self.assertIn("y", fmt.lower(), f"C{r} 应保留日期格式，实际 {fmt!r}")
+            self.assertIn("m", fmt.lower(), f"C{r} 应是日期格式，实际 {fmt!r}")
+            self.assertIn("d", fmt.lower(), f"C{r} 应是日期格式，实际 {fmt!r}")
+            self.assertIn("月", fmt, f"C{r} 应使用用户要求的自定义格式 m月d日，实际 {fmt!r}")
+            self.assertIn("日", fmt, f"C{r} 应使用用户要求的自定义格式 m月d日，实际 {fmt!r}")
 
     def test_not_written_as_text(self):
         wb = make_template()
@@ -537,6 +546,107 @@ class TestCrossDaySpan(unittest.TestCase):
         self.assertEqual(span_weekdays(FillItem(weekday=2, title="x", end_weekday=1)), [2])
         self.assertEqual(span_weekdays(FillItem(weekday=2, title="x", end_weekday=9)), [2])
         self.assertEqual(span_weekdays(FillItem(weekday=0, title="x")), [])
+
+
+class TestHeaderMergeAndDateFormat(unittest.TestCase):
+    """v1.0.41 用户实报的两个版式缺陷 —— 回归锁。
+
+    取证（用户提供的 xlsx + 截图 + 本地复现）：
+      ① 模板第 2 行「时间」表头本来是 B2:C2 合并（横跨两个横向单元格），
+         但 fill 第 2 步「解除全部合并」把它解掉、第 7 步重建清单里又漏了它
+         → 导出的表里「时间」只占一格。
+      ② C 列日期写的是裸序列号、number_format=General → **Excel** 里显示
+         「46328」；只有 LibreOffice 渲染的 PNG 自动猜成「11/2/2026」，
+         造成「PNG 好看、xlsx 难看」，合并进待处理文件后同样是裸数字。
+         用户明确要求自定义格式 m"月"d"日"（Excel 格式对话框截图）。
+    """
+
+    def _template_with_header_merge(self):
+        """模拟真实模板：表头行带 B2:C2 合并。"""
+        wb = make_template()
+        ws = wb.active
+        ws["B2"] = "时间"
+        ws.merge_cells("B2:C2")
+        return ws
+
+    def _template_without_header_merge(self):
+        """模板本身没有表头合并（用于验证不凭空造合并）。"""
+        wb = make_template()
+        ws = wb.active
+        ws["B2"] = "时间"
+        return ws
+
+    def test_header_merge_preserved_after_fill(self):
+        """核心回归：填充后「时间」表头仍横跨 B:C 两列。"""
+        ws = self._template_with_header_merge()
+        self.assertIn("B2:C2", merged_set(ws), "前置条件：模板应有 B2:C2")
+        fill_weekly_report(ws, [], PERIOD)
+        self.assertIn("B2:C2", merged_set(ws), "填充后 B2:C2 必须保留")
+        self.assertEqual(ws["B2"].value, "时间")
+
+    def test_header_merge_preserved_with_inserted_rows(self):
+        """插行场景下也不丢（表头不受插行影响，不能用 shifter 偏移）。"""
+        ws = self._template_with_header_merge()
+        fill_weekly_report(
+            ws,
+            [FillItem(weekday=i, title=f"任务{i}") for i in range(1, 8) for _ in range(3)],
+            PERIOD,
+        )
+        self.assertIn("B2:C2", merged_set(ws), "插行后 B2:C2 仍在")
+        # 表头行不能被下移
+        self.assertEqual(ws["B2"].value, "时间")
+
+    def test_no_header_merge_in_template_stays_unmerged(self):
+        """模板没有表头合并时，不得凭空造出 B2:C2（保护其他模板）。"""
+        ws = self._template_without_header_merge()
+        fill_weekly_report(ws, [], PERIOD)
+        self.assertNotIn("B2:C2", merged_set(ws))
+
+    def test_date_cells_use_custom_format(self):
+        """7 个日期单元格都用用户指定的自定义格式 m"月"d"日"。"""
+        from app.modules.weekly_report.anchors import DATE_NUMBER_FORMAT
+
+        ws = make_template().active
+        fill_weekly_report(ws, [], PERIOD)
+        for i in range(7):
+            r = 3 + i * 2
+            c = ws[f"C{r}"]
+            self.assertEqual(c.number_format, DATE_NUMBER_FORMAT)
+            self.assertIn("月", c.number_format)
+            self.assertIn("日", c.number_format)
+
+    def test_date_value_still_serial_not_text(self):
+        """格式改了，但值仍是数字序列号 —— V10「不得写文本」硬要求未破。"""
+        ws = make_template().active
+        fill_weekly_report(ws, [], PERIOD)
+        ps = date.fromisoformat(PERIOD)
+        for i in range(7):
+            c = ws[f"C{3 + i * 2}"]
+            self.assertNotIsInstance(c.value, str, "C 列不得写成文本")
+            expected = excel_serial(ps + timedelta(days=i))
+            if isinstance(c.value, (int, float)):
+                self.assertEqual(c.value, expected)
+            else:  # openpyxl 按日期格式反解成 datetime/date
+                self.assertEqual(c.value.date() if hasattr(c.value, "date") else c.value,
+                                 ps + timedelta(days=i))
+
+    def test_merge_and_format_survive_save_reload(self):
+        """落盘后再读回：合并区与格式都在（Excel 打开即正确显示）。"""
+        import io as _io
+
+        ws = self._template_with_header_merge()
+        fill_weekly_report(ws, [FillItem(weekday=1, title="任务A", end_weekday=2)], PERIOD)
+        buf = _io.BytesIO()
+        ws.parent.save(buf)
+        buf.seek(0)
+        from openpyxl import load_workbook
+
+        ws2 = load_workbook(buf).active
+        self.assertIn("B2:C2", {str(x) for x in ws2.merged_cells.ranges})
+        self.assertIn("月", ws2["C3"].number_format)
+        # 只有一条跨天任务时，它独占覆盖的整个行带（周一+周二 = D3:D6）；
+        # 两条任务时才是 D3:D5 / D6:D8（见 TestCrossDaySpan）。
+        self.assertIn("D3:D6", {str(x) for x in ws2.merged_cells.ranges}, "跨天合并仍正常")
 
 
 if __name__ == "__main__":

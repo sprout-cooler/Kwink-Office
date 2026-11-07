@@ -33,6 +33,8 @@ from .anchors import (
     COL_ISSUE,
     COL_LABEL,
     COL_SOLUTION,
+    DATE_NUMBER_FORMAT,
+    HEADER_ROW,
     ISSUE_DEMAND_MERGES,
     PLAN_ROW_1,
     PLAN_ROW_2,
@@ -194,6 +196,19 @@ def _merge(ws: Worksheet, ref: str) -> None:
         ws.merge_cells(ref)
 
 
+def _row_range_of(ref: str) -> tuple[int, int]:
+    """合并区间字符串 → (起始行, 结束行)。
+
+    例：'B2:C2' → (2, 2)；'A2:A16' → (2, 16)；'C3:C4' → (3, 4)。
+    单格区间 'B17' 也支持（openpyxl 的 merge_cells 不产生单格合并，
+    但防御性处理不费事）。
+    """
+    cell_part = ref.split(":")[-1] if ":" in ref else ref
+    digits = "".join(ch for ch in cell_part if ch.isdigit())
+    row = int(digits) if digits else 0
+    return (row, row)
+
+
 def _clear_cell(ws: Worksheet, ref: str) -> None:
     """清空单元格，但绝不碰合并区里的只读格。
 
@@ -229,21 +244,26 @@ def _style_content_cell(cell) -> None:
 
 
 def _write_series_date(ws: Worksheet, cell_ref: str, serial: int) -> None:
-    """写 Excel 日期序列号，**保持原数字格式不变**（V10 3.6.4 硬要求）。
+    """写 Excel 日期序列号，并**显式设置自定义日期格式**（v1.0.41）。
 
-    真实模板实测（本周工作总结-46230-46236.xlsx）：C 列 7 个日期单元格
-    46230~46236 的 number_format 全部是 ``General``，即模板刻意以纯数字显示序列号，
-    并没有 yyyy-mm-dd 日期格式。
+    v1.0.40 及之前：只写值、不碰格式，理由是「保持模板原格式不变」。
+    但实测（用户实报 + 本地复现）证明这条假设不成立：
 
-    因此本函数**不做任何格式改写** —— 只写值。理由：
-    1. V10 只要求「保持 C 列原有的日期显示格式」，原格式就是 General；
-    2. 擅自补 yyyy-mm-dd 会与模板其余单元格样式不一致，属于越权改动；
-    3. 区域截图（T8 口径）渲染时用户看到的就是 46230，与模板手填时完全一致。
+      1. 模板 C 列的 number_format 是 **General**，不是日期格式 —— 写进去的
+         int 序列号在 **Excel** 里就显示成「46328」这种裸数字；
+      2. 只有 **LibreOffice 渲染的 PNG** 会把 General 的序列号自动猜成短日期
+         （11/2/2026），所以「PNG 好看、xlsx 难看」，用户两边看到的不是一回事；
+      3. 合并进待处理文件后仍然是裸数字，问题被原样带过去。
 
-    若将来模板改成了真日期格式，这里写入 int 后 Excel 会自动按该格式显示，
-    同样正确 —— 所以「只写值不碰格式」在两种模板下都成立。
+    因此这里在写值的同时，把 C 列日期单元格设成用户明确要求的自定义格式
+    （截图：Excel「设置单元格格式 → 自定义 → m"月"d"日"」），显示「11月2日」。
+
+    注意：``ws[ref].number_format`` 设的是**格式代码字符串**，
+    openpyxl 会自动把它注册进目标工作簿的 numFmts —— 跨工作簿复制安全。
     """
-    ws[cell_ref].value = serial
+    cell = ws[cell_ref]
+    cell.value = serial
+    cell.number_format = DATE_NUMBER_FORMAT
 
 
 # ------------------------------------------------------------------ 主入口
@@ -280,6 +300,25 @@ def fill_weekly_report(
     # ---- 1. 标题（A1:F1 已合并，只写 A1）
     if title_text:
         ws[anchors.title_cell] = title_text
+
+    # ---- 1.5 记录表头行的原始合并区间（v1.0.41）
+    #
+    # 模板第 2 行是表头：「时间」横跨 B:C 两列（模板里就是 B2:C2 合并），
+    # 「工作内容」「遇到的问题」「解决办法」各占一列。
+    #
+    # 第 2 步会「解除全部合并」，表头这个合并也会被解掉；而第 7 步的重建清单
+    # 只覆盖 A 列竖排标题、汇总区、问题/需求区、计划区 —— **不含表头**，
+    # 于是导出的表里「时间」不再横跨两列（用户实报：表头应占两个横向单元格）。
+    #
+    # 这里**先记下来、最后原样恢复**，而不是硬编码 B2:C2 ——
+    # 这样对「表头没有合并」的模板同样安全（不会凭空造出合并）。
+    header_merges: list[str] = []
+    for rng in list(ws.merged_cells.ranges):
+        s = str(rng)
+        # 只收「完全落在表头行内」的合并（如 B2:C2）；
+        # 跨行的合并（如 A2:A16）不在此列 —— 那是 A 列竖排标题，由步骤 7 重建。
+        if _row_range_of(s) == (HEADER_ROW, HEADER_ROW):
+            header_merges.append(s)
 
     # ---- 2. 解除全部合并（仅保留标题 A1:F1）
     #
@@ -465,8 +504,7 @@ def fill_weekly_report(
     # 「本周工作」竖排标题必须覆盖到**最后一个星期块的实际结束行**。
     # 注意：last_weekday_end 已经是「实际行号」（步骤 4 用 block_actual 算出），
     # 这里不能再过 shifter.actual_row_range —— 那会二次偏移，曾导致 A2:A20 跨进汇总区。
-    a_regions = [
-        (2, last_weekday_end, "week"),                            # 本周工作（起点固定 2）
+    a_regions = [        (2, last_weekday_end, "week"),                            # 本周工作（起点固定 2）
         (*anchors.summary_row_range, "shift"),                    # 工作汇总
         (*anchors.issue_row_range, "shift"),                      # 重点问题
         (*anchors.demand_row_range, "shift"),                     # 工作需求
@@ -499,6 +537,16 @@ def fill_weekly_report(
     _merge(ws, f"{COL_LABEL}{plan_start}:{COL_DATE}{plan_end}")
     for r in range(plan_start, plan_end + 1):
         _merge(ws, f"{COL_CONTENT}{r}:{COL_SOLUTION}{r}")
+
+    # ---- 7.5 恢复表头行的合并区间（v1.0.41）
+    #
+    # 「时间」表头在模板里横跨 B:C 两列（用户实报：应占两个横向单元格），
+    # 第 2 步解除合并时被解掉，这里按第 1.5 步记录的原样恢复。
+    #
+    # 表头行不受插行影响（星期块从第 3 行起），所以行号直接用 HEADER_ROW，
+    # **不能**过 shifter.actual —— 插行只发生在第 3 行及之后。
+    for ref in header_merges:
+        _merge(ws, ref)
 
     # ---- 8. 行号校验（V10：填充完成后做一次行号校验）
     shifter.validate_monotonic(anchors)

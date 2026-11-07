@@ -205,5 +205,14 @@
     "fpk": "omnioffice_1.0.40_all_20261107.fpk",
     "commit": "b839aa2",
     "note": "合并周报改为使用「预览与导出」已生成的产物（不再重新导出、不产截图）"
+  },
+  {
+    "ts": "2026-11-07T13:38:12.771Z",
+    "appname": "omnioffice",
+    "version": "1.0.41",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.41_all_20261107.fpk",
+    "commit": "5782608",
+    "note": "修复周报时间表头合并区丢失 + C列日期改用自定义格式 m月d日"
   }
 ]
