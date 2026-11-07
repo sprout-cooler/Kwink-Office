@@ -22,6 +22,14 @@ import TaskTimeField from "./TaskTimeField.vue";
 import { bizApi, type BizCustomer } from "@/api/biz-dashboard";
 import { OOCard, OOEmptyState, OOIcon, OOPageHeader, OOSectionTitle, OOStatTile, OOToolbar } from "@/components/ui";
 
+/** 这条工单横跨几天（1=单天）。跨天工单导出时会在每天各占一行。 */
+function spanDays(t: TaskItemDto): number {
+  const wd = t.weekday ?? 0;
+  const end = t.endWeekday ?? 0;
+  if (!wd || !end || end <= wd) return 1;
+  return end - wd + 1;
+}
+
 const loading = ref(false);
 const saving = ref<number | null>(null);
 const items = ref<TaskItemDto[]>([]);
@@ -491,7 +499,7 @@ async function confirmAllVisible() {
             </template>
           </el-table-column>
 
-          <el-table-column label="结束时间" width="210">
+          <el-table-column label="结束时间" width="240">
             <template #default="{ row }: { row: TaskItemDto }">
               <TaskTimeField
                 :text="draftOf(row).end"
@@ -502,6 +510,16 @@ async function confirmAllVisible() {
                 @update:text="(v: string) => (draftOf(row).end = v)"
                 @commit="commitTime(row)"
               />
+              <el-tag
+                v-if="spanDays(row) > 1"
+                size="small"
+                type="warning"
+                effect="plain"
+                class="ml6"
+                :title="`这条工单横跨 ${spanDays(row)} 天，导出时会在每天各占一行`"
+              >
+                跨 {{ spanDays(row) }} 天
+              </el-tag>
             </template>
           </el-table-column>
 

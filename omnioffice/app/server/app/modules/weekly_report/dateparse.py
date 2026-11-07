@@ -67,6 +67,13 @@ class NormalizedTime:
     weekday: int   # 1=周一 … 7=周日（按归属策略日期）
     out_of_period: bool
     warnings: list[str] = field(default_factory=list)
+    # 跨天任务的**结束日**星期（1=周一…7=周日）；0 = 与开始同日（单天）。
+    #
+    # 为什么单独存：`weekday` 只记了归属日（策略选的 anchor），跨天区间信息
+    # 在此之前是**丢失**的 —— 导出时无法知道一个工单跨了哪几天，于是把它
+    # 整个塞进归属日那一个星期块，表现为「跨天工单只出现在一天」。
+    # 保留 end_weekday 后，填充引擎才能让跨天工单在它覆盖的每一天都占一行。
+    end_weekday: int = 0
 
 
 # ---------------------------------------------------------------- 日期解析
@@ -146,11 +153,47 @@ def _clocks(text: str) -> list[tuple[int, int]]:
     return out
 
 
+def _end_date_in_range(text: str, period_start: date) -> date | None:
+    """区间文本里的**第二个**日期（结束日）；解析不出返回 None。
+
+    「2026-11-02 10:30 至 2026-11-03 12:19」这类写法，结束时刻的日期与
+    开始日期不同。原实现直接拿开始日期去拼结束时刻 → 跨天工单被当成单天
+    （结束日星期永远算成 0），周报里就只出现在一天。
+
+    做法：按 parse_date **相同**的匹配顺序定位第一个日期，取其后的文本
+    再解析一次。匹配顺序必须与 parse_date 一致，否则 tail 的起点会错位
+    （比如先命中 _NUM_MD_RE 把「11-02」当月/日，切点就不对了）。
+    """
+    for rex in (
+        _FULL_YMD_RE,
+        _COMPACT_RE,
+        _EN_MD_RE,
+        _CN_MD_RE,
+        _CN_WEEK_RE,
+        _EN_WEEK_RE,
+        _NUM_MD_RE,
+    ):
+        m = rex.search(text)
+        if not m:
+            continue
+        tail = text[m.end():]
+        if not tail.strip():
+            return None
+        try:
+            return parse_date(tail, period_start)
+        except DateParseError:
+            return None
+    return None
+
+
 def parse_range(text: str, period_start: date) -> tuple[datetime, datetime | None, list[str]]:
     """解析「日期 + 起止时刻」文本，返回 (开始时间, 结束时间|None, warnings)。
 
     不预拆区间：直接在全文按出现顺序提取时刻——第一个为开始、第二个为结束，
     规避「10-09 09:00-18:00」中日期连字符被误判为区间分隔的问题。
+
+    结束**日期**单独处理：区间里若写了第二个日期（「11-02 10:30 至 11-03
+    12:19」），用它作结束日，否则用开始日 —— 跨天工单能否被识别出来全看这一步。
     """
     warnings: list[str] = []
     start_date = parse_date(text, period_start)
@@ -163,7 +206,13 @@ def parse_range(text: str, period_start: date) -> tuple[datetime, datetime | Non
     end_dt = None
     if len(clocks) >= 2:
         eh, em = clocks[1]
-        end_dt = datetime.combine(start_date, datetime.min.time()).replace(hour=eh, minute=em)
+        end_date = _end_date_in_range(text, period_start)
+        if end_date is not None:
+            if end_date != start_date:
+                warnings.append("END_DATE_PARSED")
+        else:
+            end_date = start_date
+        end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=eh, minute=em)
         if end_dt < start_dt:
             # 结束时刻早于开始时刻 → 跨到次日
             end_dt += timedelta(days=1)
@@ -235,10 +284,21 @@ def normalize_task(
     if out_of_period:
         warnings.append("OUT_OF_PERIOD")
 
+    # 跨天区间：结束日截断到周期内（周期 = 周一 ~ 周日）。
+    # 跨周（如周日 → 下周一）会被截回周日，与开始日同一天 → end_weekday=0，
+    # 不会把工单算到周期之外。
+    end_date = end_dt.date() if end_dt else start_dt.date()
+    if end_date < start_dt.date():
+        end_date = start_dt.date()
+    if end_date > period_end:
+        end_date = period_end
+    end_weekday = end_date.isoweekday() if end_date > start_dt.date() else 0
+
     return NormalizedTime(
         start_at=start_dt.isoformat(timespec="minutes"),
         end_at=(end_dt.isoformat(timespec="minutes") if end_dt else start_dt.isoformat(timespec="minutes")),
         weekday=anchor.isoweekday(),
         out_of_period=out_of_period,
         warnings=sorted(set(warnings)),
+        end_weekday=end_weekday,
     )

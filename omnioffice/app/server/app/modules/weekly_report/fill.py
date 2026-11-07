@@ -67,6 +67,10 @@ class FillItem:
     start_at: str = ""
     end_at: str = ""
     status: str = ""
+    # 跨天任务的结束日星期（1=周一…7=周日）；0 = 与开始同日（单天）。
+    # v1.0.39：跨天工单要在它覆盖的**每一天**都出现，只靠 weekday（归属日）
+    # 无法表达，跨天信息会在这里被丢掉。
+    end_weekday: int = 0
 
 
 @dataclass
@@ -77,6 +81,10 @@ class FillPlan:
     shifter: RowShifter = field(default_factory=RowShifter)
     stats: dict[str, int] = field(default_factory=dict)
     plan_titles: list[str] = field(default_factory=list)
+    # 待写入条目（保持传入顺序 = 书写顺序）
+    items: list[FillItem] = field(default_factory=list)
+    # 每天覆盖到的条目**索引**（跨天任务在它覆盖的每天都出现一次）
+    day_items: dict[int, list[int]] = field(default_factory=dict)
 
     @property
     def inserted_rows(self) -> int:
@@ -86,6 +94,21 @@ class FillPlan:
     def plan_extra_rows(self) -> int:
         """下周计划超出模板 4 个槽位需要追加的行数。"""
         return max(0, len(self.plan_titles) - anchors_default_plan_slots())
+
+
+def span_weekdays(item: FillItem) -> list[int]:
+    """这条任务覆盖的星期几（升序）。
+
+    单天 → [weekday]；跨天 → [weekday, …, end_weekday]。
+    周报周期是周一~周日，跨周在归一化阶段已截断，这里不会跨到周期外。
+    """
+    wd = item.weekday
+    if not (1 <= wd <= 7):
+        return []
+    end_wd = item.end_weekday
+    if end_wd and wd < end_wd <= 7:
+        return list(range(wd, end_wd + 1))
+    return [wd]
 
 
 def anchors_default_plan_slots() -> int:
@@ -113,15 +136,26 @@ def build_plan(
     末尾追加行容纳（计划区是全表最后一个区块，追加不影响任何既有行号）。
     """
     titles: dict[int, list[str]] = {b.weekday: [] for b in anchors.weekdays}
-    for it in items:
-        if it.weekday in titles and it.title.strip():
-            titles[it.weekday].append(it.title.strip())
+    # 每天覆盖到的条目索引：跨天任务在它覆盖的**每一天**都进一份，
+    # 这样同一天可能有两条内容（如 A 跨到周二、B 从周二开始）。
+    day_items: dict[int, list[int]] = {b.weekday: [] for b in anchors.weekdays}
+    for idx, it in enumerate(items):
+        if not it.title.strip():
+            continue
+        days = span_weekdays(it)
+        if not days:
+            continue  # weekday 不在 1~7（无时间）→ 进不了星期块，由调用方如实告知
+        for d in days:
+            day_items[d].append(idx)
 
     plan = FillPlan(plan_titles=[t.strip() for t in plan_texts if t and t.strip()])
+    plan.items = list(items)
     shifter = RowShifter()
     for b in anchors.weekdays:
-        lst = titles[b.weekday]
+        idxs = day_items[b.weekday]
+        lst = [items[i].title.strip() for i in idxs]
         plan.per_weekday[b.weekday] = lst
+        plan.day_items[b.weekday] = list(idxs)
         need = _weekday_rows(b.weekday, len(lst))
         if need > 2:
             # 在本块起始行之前插入（保证本块原有 2 行仍保留，后续块顺移）
@@ -314,23 +348,60 @@ def fill_weekly_report(
     for r in range(plan_start, plan_end + 1):
         _clear_cell(ws, f"{COL_CONTENT}{r}")
 
+    # ---- 5b. D 列任务内容（跨天任务跨块合并）
+    #
+    # 规则：
+    #   · 某天有 k 条内容、该天行带 R 行 → 前 k-1 条各占 1 行，最后一条占剩余；
+    #   · 一条跨天任务的内容块 = 它在**起始天**的段首 → 它在**结束天**的段尾，
+    #     因此它跨过中间各天，并在那些天各占一行。
+    #
+    # 例（用户报的实际案例，行带各 2 行）：
+    #   ① 周一→周二   ② 周二→周三
+    #   周一：[①]        → ① 占 3-4
+    #   周二：[①, ②]     → ① 占 5、② 占 6
+    #   周三：[②]        → ② 占 7-8
+    #   ⇒ ① = D3:D5（周一→周二），② = D6:D8（周二→周三）
+    #   即两个工单在 11 月 3 日各占一行，与人工修正版完全一致。
+
+    # 5b-1. 拆开步骤 4 建的整块 D 合并。
+    # 跨天任务的合并区会跨块，必须先全拆再按任务重建；
+    # **无内容**的块保持整块合并（版式与空模板一致）。
     for b in anchors.weekdays:
-        titles = plan.per_weekday[b.weekday]
-        actual_start, actual_end = shifter.block_actual(b.start_row, b.end_row)
-        if not titles:
-            continue  # 0 条：整块留空（D 合并已在步骤 4 建好，版式与空模板一致）
-        if len(titles) == 1:
-            # 1 条：D 已是整块合并，直接写锚点格
-            cell = ws[f"{COL_CONTENT}{actual_start}"]
-            cell.value = titles[0]
-            _style_content_cell(cell)
-        else:
-            # 2 条及以上：拆开 D 列合并，逐行填写（3 条以上时块已在步骤 3 扩行）
-            _unmerge(ws, f"{COL_CONTENT}{actual_start}:{COL_CONTENT}{actual_end}")
-            for i, t in enumerate(titles):
-                c = ws[f"{COL_CONTENT}{actual_start + i}"]
-                c.value = t
-                _style_content_cell(c)
+        if not plan.day_items.get(b.weekday):
+            continue
+        a_start, a_end = shifter.block_actual(b.start_row, b.end_row)
+        _unmerge(ws, f"{COL_CONTENT}{a_start}:{COL_CONTENT}{a_end}")
+
+    # 5b-2. 每天的行段分配：segments[条目下标][星期] = (首行, 末行)
+    segments: dict[int, dict[int, tuple[int, int]]] = {}
+    for b in anchors.weekdays:
+        idxs = plan.day_items.get(b.weekday, [])
+        if not idxs:
+            continue
+        a_start, a_end = shifter.block_actual(b.start_row, b.end_row)
+        k = len(idxs)
+        for i, idx in enumerate(idxs):
+            if i < k - 1:
+                seg = (a_start + i, a_start + i)
+            else:
+                seg = (a_start + i, a_end)
+            segments.setdefault(idx, {})[b.weekday] = seg
+
+    # 5b-3. 逐条写内容，合并区 = 起始天段首 → 结束天段尾
+    for idx, it in enumerate(plan.items):
+        days = span_weekdays(it)
+        if not days or not it.title.strip():
+            continue
+        segs = segments.get(idx)
+        if not segs:
+            continue
+        first = segs[days[0]][0]
+        last = segs[days[-1]][1]
+        if last > first:
+            _merge(ws, f"{COL_CONTENT}{first}:{COL_CONTENT}{last}")
+        c = ws[f"{COL_CONTENT}{first}"]
+        c.value = it.title.strip()
+        _style_content_cell(c)
 
     # 下周计划逐条写入 D:F 合并槽位
     for i, t in enumerate(plan.plan_titles):

@@ -859,6 +859,9 @@ def _load_tasks_for_export(
                     start_at=t.start_at,
                     end_at=t.end_at,
                     status=t.raw_status,
+                    # 跨天工单的结束日星期（0=单天）；填充引擎据此让它在
+                    # 覆盖的每一天都占一行，而不是整个塞进归属日。
+                    end_weekday=t.end_weekday,
                 )
             )
             continue

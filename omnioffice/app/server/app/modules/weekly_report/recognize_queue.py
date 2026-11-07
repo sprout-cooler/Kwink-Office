@@ -304,12 +304,16 @@ def _process_one(sid: int) -> None:
                     norm = normalize_task(raw_start, raw_end, period_start=report_period)
                     start_at, end_at = norm.start_at, norm.end_at
                     weekday = norm.weekday
+                    # 跨天区间的结束日星期（0=单天）；导出时用它让跨天工单
+                    # 在覆盖的每一天都出现。
+                    end_weekday = norm.end_weekday
                     extra["warnings"] = norm.warnings
                     extra["out_of_period"] = norm.out_of_period
                 except DateParseError as e:
                     # 解析失败保留原文，校对界面标红人工处理（V10：绝不猜测）
                     start_at = end_at = ""
                     weekday = 0
+                    end_weekday = 0
                     extra["warnings"] = ["DATE_PARSE_FAILED"]
                     extra["parse_error"] = str(e)
                     extra["start_raw"] = raw_start
@@ -317,6 +321,7 @@ def _process_one(sid: int) -> None:
             else:
                 start_at = end_at = ""
                 weekday = 0
+                end_weekday = 0
                 extra["warnings"] = ["START_TIME_MISSING"]
 
             db.add(
@@ -330,6 +335,7 @@ def _process_one(sid: int) -> None:
                     raw_status=t.get("status") or "",
                     confidence=t.get("confidence") or 0.0,
                     weekday=weekday,
+                    end_weekday=end_weekday,
                     extra=extra,
                 )
             )

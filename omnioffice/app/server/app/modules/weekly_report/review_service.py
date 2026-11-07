@@ -137,6 +137,9 @@ def task_dto(t: TaskItem) -> dict[str, Any]:
         "startAt": t.start_at,
         "endAt": t.end_at,
         "weekday": t.weekday,
+        # 跨天任务的结束日星期（0=单天）；前端据此标出「跨 N 天」，
+        # 让用户在导出前就能看出这条工单横跨了几天。
+        "endWeekday": t.end_weekday,
         "rawStatus": t.raw_status,
         "confidence": round(float(t.confidence or 0), 3),
         "confidenceLevel": level,
@@ -201,6 +204,7 @@ def _renormalize(
         task.start_at = ""
         task.end_at = ""
         task.weekday = 0
+        task.end_weekday = 0
         warnings.append("START_TIME_MISSING")
         extra.pop("parse_error", None)
         extra.pop("start_raw", None)
@@ -213,6 +217,8 @@ def _renormalize(
         task.start_at = norm.start_at
         task.end_at = norm.end_at
         task.weekday = norm.weekday
+        # 跨天区间：结束日星期（0=单天）。没有它，导出时无法知道工单跨了哪几天。
+        task.end_weekday = norm.end_weekday
         warnings.extend(norm.warnings)
         extra["out_of_period"] = norm.out_of_period
         # 人工修正后清除原 AI 原文，标记为已定稿
@@ -231,6 +237,8 @@ def _renormalize(
             task.start_at = dt.isoformat(timespec="minutes")
             task.end_at = task.start_at
             task.weekday = d.isoweekday()
+            # 只有日期没有时刻 → 结束时刻未知，按**单天**处理（不臆造跨天）
+            task.end_weekday = 0
             extra["out_of_period"] = out_of_period
             extra["start_raw"] = start_raw
             extra["end_raw"] = end_raw
@@ -242,6 +250,7 @@ def _renormalize(
             task.start_at = ""
             task.end_at = ""
             task.weekday = 0
+            task.end_weekday = 0
             warnings.append("DATE_PARSE_FAILED")
             extra["parse_error"] = str(e)
             extra["start_raw"] = start_raw

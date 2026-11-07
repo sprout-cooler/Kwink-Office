@@ -24,7 +24,14 @@ from fastapi import HTTPException, UploadFile
 from openpyxl import Workbook, load_workbook
 
 from app.core.identity import Identity
-from app.db.models import ExportArtifact, Report, TaskItem, TemplateVersion
+from app.db.models import (
+    ExportArtifact,
+    Report,
+    TaskItem,
+    TemplateVersion,
+    WeeklyMergeRecord,
+    WeeklyPendingFile,
+)
 from app.modules.weekly_report import export_service as ES
 from app.modules.weekly_report.export_service import (
     _compute_print_area,
@@ -60,7 +67,15 @@ class ExportTestBase(unittest.TestCase):
         self.db = SessionLocal()
         from app.db.models import Screenshot
 
-        for M in (ExportArtifact, TaskItem, Screenshot, Report, TemplateVersion):
+        for M in (
+            ExportArtifact,
+            TaskItem,
+            Screenshot,
+            Report,
+            TemplateVersion,
+            WeeklyMergeRecord,
+            WeeklyPendingFile,
+        ):
             self.db.query(M).delete()
         self.db.commit()
         self.tmp = Path(__file__).parent.parent.parent.parent / ".test-export"
@@ -1097,6 +1112,11 @@ class TestDiagLog(unittest.TestCase):
 
         db = SessionLocal()
         try:
+            # 先删引用 screenshots 的 task_items：screenshots 被 task_items 外键引用，
+            # 直接 DELETE FROM screenshots 会撞外键（sqlite3.IntegrityError）。
+            # 这些用例跑的是**共享的持久化库**，前序用例留下的 TaskItem 行会让
+            # 这句删除直接失败 —— 与本用例要验证的东西毫无关系。
+            db.query(TaskItem).delete()
             db.query(Screenshot).delete()
             db.commit()
             rep = db.query(Report).first()
@@ -1126,6 +1146,11 @@ class TestDiagLog(unittest.TestCase):
 
         db = SessionLocal()
         try:
+            # 先删引用 screenshots 的 task_items：screenshots 被 task_items 外键引用，
+            # 直接 DELETE FROM screenshots 会撞外键（sqlite3.IntegrityError）。
+            # 这些用例跑的是**共享的持久化库**，前序用例留下的 TaskItem 行会让
+            # 这句删除直接失败 —— 与本用例要验证的东西毫无关系。
+            db.query(TaskItem).delete()
             db.query(Screenshot).delete()
             db.commit()
         finally:

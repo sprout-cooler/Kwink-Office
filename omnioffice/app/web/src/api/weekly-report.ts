@@ -89,6 +89,8 @@ export interface TaskItemDto {
   startAt: string;
   endAt: string;
   weekday: number;
+  /** 跨天任务的结束日星期（0=单天）；用于标出「跨 N 天」 */
+  endWeekday?: number;
   rawStatus: string;
   confidence: number;
   /** ≥0.8 正常 / 0.6~0.8 标黄 / <0.6 标红 */

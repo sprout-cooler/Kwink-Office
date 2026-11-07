@@ -84,6 +84,9 @@ class TaskItem(Base):
     confidence: Mapped[float] = mapped_column(default=0.0, nullable=False)
     # 归属星期 1~7（M3 校对可改）；0=未归组
     weekday: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 跨天任务的结束日星期 1~7；0=与开始同日（单天）。
+    # v1.0.39：跨天工单要在它覆盖的每一天都出现，weekday 只记归属日不够用。
+    end_weekday: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # 统计分类（M3「分区优先+关键词兜底」计算）
     stat_category: Mapped[str] = mapped_column(String(20), default="unclassified", nullable=False)
     extra: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)

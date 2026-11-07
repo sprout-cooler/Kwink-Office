@@ -187,5 +187,14 @@
     "fpk": "omnioffice_1.0.38_all_20261031.fpk",
     "commit": "d02ab2f",
     "note": "待处理文件上传增加进度条 + 防重复上传 + 相同内容免重写"
+  },
+  {
+    "ts": "2026-11-07T02:41:19.899Z",
+    "appname": "omnioffice",
+    "version": "1.0.39",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.39_all_20261107.fpk",
+    "commit": "2f415bb",
+    "note": "修复跨天工单识别：跨天工单在覆盖的每一天各占一行"
   }
 ]

@@ -459,5 +459,85 @@ class TestColumnAMerges(unittest.TestCase):
         self.assertIn("A22:A23", ms)
 
 
+class TestCrossDaySpan(unittest.TestCase):
+    """跨天工单：必须在它覆盖的**每一天**都占一行（v1.0.39）。
+
+    用户实际案例（2026-11-02 ~ 11-08 周期）：
+      工单① 11-02 10:30 → 11-03 12:19（周一→周二）
+      工单② 11-03 13:30 → 11-04 19:17（周二→周三）
+    两者在 11 月 3 日各占约半天。人工修正版的正确结果是：
+      ① = D3:D5（周一→周二）   ② = D6:D8（周二→周三）
+    即星期二那格里两条内容各占一行；而旧实现把两个工单分别塞进
+    星期一、星期二，星期三空着 —— 跨天信息在归一化阶段就被丢掉了。
+    """
+
+    def _filled(self, items):
+        wb = make_template()
+        ws = wb.active
+        plan = fill_weekly_report(ws, items, PERIOD, summary_counts=None)
+        return ws, plan
+
+    def test_user_case_two_overlapping_cross_day_tasks(self):
+        """用户实报案例：①周一→周二、②周二→周三。"""
+        ws, plan = self._filled(
+            [
+                FillItem(weekday=1, title="工单①", end_weekday=2),
+                FillItem(weekday=2, title="工单②", end_weekday=3),
+            ]
+        )
+        merged = merged_set(ws)
+        self.assertIn("D3:D5", merged, "工单①应跨周一→周二")
+        self.assertIn("D6:D8", merged, "工单②应跨周二→周三")
+        self.assertEqual(ws["D3"].value, "工单①")
+        self.assertEqual(ws["D6"].value, "工单②")
+        self.assertEqual(plan.inserted_rows, 0, "行带够用，不该插行")
+
+    def test_cross_day_task_alone_spans_two_days(self):
+        """单个跨两天任务：内容块跨两天。
+
+        星期二只有它一条内容 → 按「最后一条占剩余行」规则，它独占星期二的
+        整个行带（5-6 行），故合并区是 D3:D6。
+        （用户案例里星期二有两条，那它只占 1 行 → D3:D5。）
+        """
+        ws, _ = self._filled([FillItem(weekday=1, title="跨天", end_weekday=2)])
+        self.assertIn("D3:D6", merged_set(ws))
+        self.assertEqual(ws["D3"].value, "跨天")
+
+    def test_cross_day_task_spans_three_days(self):
+        """跨三天的任务：周一→周三。"""
+        ws, _ = self._filled([FillItem(weekday=1, title="跨三天", end_weekday=3)])
+        self.assertIn("D3:D8", merged_set(ws))
+        self.assertEqual(ws["D3"].value, "跨三天")
+
+    def test_single_day_task_behaviour_unchanged(self):
+        """单天任务行为不变：整块合并。"""
+        ws, _ = self._filled([FillItem(weekday=1, title="唯一任务")])
+        self.assertIn("D3:D4", merged_set(ws))
+        self.assertEqual(ws["D3"].value, "唯一任务")
+
+    def test_two_tasks_same_day_still_splits(self):
+        """同一天两条单天任务 → 仍拆开各占一行（旧行为不变）。"""
+        ws, _ = self._filled([FillItem(weekday=1, title="A"), FillItem(weekday=1, title="B")])
+        self.assertNotIn("D3:D4", merged_set(ws))
+        self.assertEqual(ws["D3"].value, "A")
+        self.assertEqual(ws["D4"].value, "B")
+
+    def test_empty_day_keeps_block_merge(self):
+        """没有内容的星期块仍保持整块合并（版式与空模板一致）。"""
+        ws, _ = self._filled([FillItem(weekday=1, title="只有周一")])
+        self.assertIn("D5:D6", merged_set(ws), "星期二无内容应保留整块合并")
+
+    def test_span_weekdays_helper(self):
+        from app.modules.weekly_report.fill import span_weekdays
+
+        self.assertEqual(span_weekdays(FillItem(weekday=1, title="x")), [1])
+        self.assertEqual(span_weekdays(FillItem(weekday=1, title="x", end_weekday=3)), [1, 2, 3])
+        # end_weekday 非法（0 / 倒退 / 越界）→ 退化为单天，绝不越界
+        self.assertEqual(span_weekdays(FillItem(weekday=2, title="x", end_weekday=0)), [2])
+        self.assertEqual(span_weekdays(FillItem(weekday=2, title="x", end_weekday=1)), [2])
+        self.assertEqual(span_weekdays(FillItem(weekday=2, title="x", end_weekday=9)), [2])
+        self.assertEqual(span_weekdays(FillItem(weekday=0, title="x")), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -136,5 +136,67 @@ class TestNormalizeTask(unittest.TestCase):
             normalize_task("10月9日", period_start="not-a-date")
 
 
+class TestCrossDayDetection(unittest.TestCase):
+    """跨天工单的识别（v1.0.39）。
+
+    用户实报：工单「2026-11-02 10:30 → 2026-11-03 12:19」跨天，
+    之前被当成单天 —— 周报里只出现在一天。根因有两处：
+      ① 归一化把跨天区间压缩成了一个 weekday（结束日信息丢失）；
+      ② parse_range 用**开始日期**去拼结束时刻，区间里的第二个日期被丢掉。
+    """
+
+    PS2 = "2026-11-02"   # 周期周一（2026-11-02 ~ 11-08）
+
+    def test_start_and_end_given_separately(self):
+        """截图最常见形式：起止分成两段。"""
+        n = normalize_task("2026-11-02 10:30", "2026-11-03 12:19", period_start=self.PS2)
+        self.assertEqual(n.weekday, 1)
+        self.assertEqual(n.end_weekday, 2)
+        self.assertEqual(n.end_at, "2026-11-03T12:19")
+
+    def test_range_in_one_text_with_second_date(self):
+        """同一段文本内含区间，且写了第二个日期 → 必须跨天。"""
+        n = normalize_task("2026-11-02 10:30 至 2026-11-03 12:19", period_start=self.PS2)
+        self.assertEqual(n.weekday, 1)
+        self.assertEqual(n.end_weekday, 2)
+        self.assertEqual(n.end_at, "2026-11-03T12:19")
+
+    def test_range_with_dash_separator(self):
+        n = normalize_task("2026-11-02 10:30 - 2026-11-03 12:19", period_start=self.PS2)
+        self.assertEqual(n.end_weekday, 2)
+
+    def test_range_without_year(self):
+        n = normalize_task("11/02 10:30 至 11/03 12:19", period_start=self.PS2)
+        self.assertEqual(n.end_weekday, 2)
+
+    def test_range_with_weekday_words(self):
+        n = normalize_task("周一 10:30 至周三 12:19", period_start=self.PS2)
+        self.assertEqual(n.weekday, 1)
+        self.assertEqual(n.end_weekday, 3)
+
+    def test_same_day_range_not_treated_as_cross_day(self):
+        """同日区间不能误判成跨天。"""
+        n = normalize_task("2026-11-02 10:30 至 2026-11-02 18:00", period_start=self.PS2)
+        self.assertEqual(n.weekday, 1)
+        self.assertEqual(n.end_weekday, 0)
+
+    def test_single_day_task(self):
+        n = normalize_task("2026-11-05 09:00", "2026-11-05 18:00", period_start=self.PS2)
+        self.assertEqual(n.weekday, 4)
+        self.assertEqual(n.end_weekday, 0)
+
+    def test_cross_week_is_clamped_to_period(self):
+        """周日 → 下周一：超出周期，截断回周日（不当成跨天）。"""
+        n = normalize_task("2026-11-08 20:00", "2026-11-09 10:00", period_start=self.PS2)
+        self.assertEqual(n.weekday, 7)
+        self.assertEqual(n.end_weekday, 0)
+
+    def test_end_before_start_rolls_to_next_day(self):
+        """结束时刻早于开始时刻 → 次日。"""
+        n = normalize_task("2026-11-02 22:00", "2026-11-02 06:00", period_start=self.PS2)
+        self.assertEqual(n.weekday, 1)
+        self.assertEqual(n.end_weekday, 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
