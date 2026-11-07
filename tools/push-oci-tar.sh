@@ -30,6 +30,9 @@ scp -i "$SSH_KEY" -o ConnectTimeout=20 -o StrictHostKeyChecking=no \
 
 WIN_TAR="$(cygpath -w "$LOCAL_DIR/kwink-kwinkoffice-${VER}.oci.tar")"
 
+# 凭据由 python 脚本**在进程内**从 Docker 凭据助手读取，不写任何临时文件。
+# （早前版本写临时 JSON 文件，结果 rm 被安全策略拦截，凭据残留在磁盘上 —— 已废弃。）
+
 echo "==> 直推 Docker Hub（走 Registry API，不经 docker daemon）"
 PUSH_TAG="$VER" PUSH_PROXY="${PUSH_PROXY:-http://127.0.0.1:7897}" \
     "$PY" "$ROOT/tools/push-oci-tar.py" "$WIN_TAR"

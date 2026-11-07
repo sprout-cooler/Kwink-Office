@@ -13,8 +13,11 @@ connection reset。于是改用最底层的 Registry HTTP API 手动推送：
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tarfile
 import urllib.error
@@ -47,14 +50,84 @@ def api(method: str, url: str, data=None, headers=None, expect=(200, 201, 202, 2
 
 
 def get_token() -> str:
+    """取一个带 push 权限的 registry token。
+
+    匿名 token 只有 **pull** 权限（实测：access.actions == ["pull"]），
+    POST /blobs/uploads/ 会 401。所以必须带 Docker Hub 账号认证。
+
+    凭据来源：直接调用 Docker 的凭据助手（`docker-credential-desktop get`）
+    读取 Docker Desktop credsStore，**在进程内解析，不写任何临时文件**
+    （写文件有被安全策略拦截 rm 的风险，凭据会残留在磁盘上）。
+
+    可用环境变量覆盖：
+      DOCKER_CRED_HELPER — 凭据助手可执行文件路径
+      DOCKER_USERNAME / DOCKER_PASSWORD — 直接给账号密码（PAT）
+    """
     q = urllib.parse.urlencode(
         {
             "service": "registry.docker.io",
             "scope": f"repository:{REPO}:push,pull",
         }
     )
-    _, body, _ = api("GET", f"{AUTH}/token?{q}")
-    return json.loads(body)["token"]
+
+    user = os.environ.get("DOCKER_USERNAME", "").strip()
+    secret = os.environ.get("DOCKER_PASSWORD", "").strip()
+
+    if not (user and secret):
+        user, secret = _read_cred_helper()
+    if not (user and secret):
+        raise RuntimeError(
+            "取不到 Docker Hub 凭据：既没有 DOCKER_USERNAME/DOCKER_PASSWORD，"
+            "也读不到凭据助手。请先 docker login。"
+        )
+
+    basic = base64.b64encode(f"{user}:{secret}".encode()).decode()
+    _, body, _ = api(
+        "GET",
+        f"{AUTH}/token?{q}",
+        headers={"Authorization": f"Basic {basic}"},
+    )
+    tok = json.loads(body)["token"]
+    print(f"账号 {user} 认证成功")
+    return tok
+
+
+def _read_cred_helper() -> tuple[str, str]:
+    """调用 docker-credential-desktop（或 docker-credential-pass）取凭据。
+
+    只在内存里解析，返回 (username, secret)；**不落盘**。
+    """
+    candidates = [
+        os.environ.get("DOCKER_CRED_HELPER", "").strip(),
+        r"C:\Users\kwink\AppData\Local\Programs\DockerDesktop\resources\bin\docker-credential-desktop.exe",
+        "docker-credential-desktop.exe",
+        "docker-credential-desktop",
+    ]
+    for path in candidates:
+        if not path:
+            continue
+        exe = path if os.path.isfile(path) else shutil.which(path)
+        if not exe:
+            continue
+        try:
+            proc = subprocess.run(
+                [exe, "get"],
+                input="https://index.docker.io/v1/\n",
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                continue
+            cred = json.loads(proc.stdout)
+        except Exception as e:  # noqa: BLE001 —— 换下一个候选
+            print(f"  凭据助手 {path} 读取失败：{e}")
+            continue
+        u = cred.get("Username") or ""
+        s = cred.get("Secret") or ""
+        if u and s:
+            return u, s
+    return "", ""
 
 
 def blob_path(digest: str) -> str:
