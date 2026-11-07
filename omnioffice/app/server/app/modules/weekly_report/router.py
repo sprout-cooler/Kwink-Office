@@ -458,57 +458,60 @@ def merge_pending_file(
     db: Session = Depends(get_db),
     identity: Identity = Depends(_require_identity),
 ):
-    """执行导出，并把生成的 xlsx 追加为待处理文件的一个新工作表，同时就地替换原文件。
+    """把「预览与导出」**已生成的产物**的工作表，合并进待处理文件。
 
-    前置卡点：与导出一致的 export-readiness（低置信度未确认 / 时间解析失败会 409）。
+    v1.0.40 变更（按用户要求）：
+      - **不再自己重新导出**：合并用的是导出页跑出来的那份 xlsx，
+        台账里的内容因此与用户手里那份文件**完全一致**；
+      - **不产截图**：合并只搬运工作表，不渲染 PNG 区域截图；
+      - 工作表名仍按阶段时间区间命名（如 261026-261030），取自该产物的周报周期。
+
+    body: {artifactId?: number} —— 指定用哪次导出；不传则用最近一次。
     每次合并前自动备份原文件，失败自动回滚。
     """
     body = body or {}
-    scope = str(body.get("scope") or "content")
-    dpi = int(body.get("dpi") or export_service.PNG_DPI)
-    render_png = bool(body.get("renderPng", True))
-
-    report = service.get_or_create_current_report(db, identity)
-    # 先确认有模板：没有模板时 export 会在填充阶段炸出 AttributeError，
-    # 那时用户看到的是「服务内部错误」，而真实原因只是「还没上传模板」。
-    if export_service.resolve_template(db, identity, report) is None:
+    artifact_id = body.get("artifactId")
+    art = export_service.get_artifact_for_merge(
+        db, identity, int(artifact_id) if artifact_id else None
+    )
+    if art is None:
         raise HTTPException(
             status_code=400,
             detail={
-                "error": "NO_TEMPLATE",
-                "message": "还没有可用的周报模板，请先到「预览与导出」上传并绑定模板",
+                "error": "NO_EXPORT_ARTIFACT",
+                "message": "还没有导出产物。请先到「预览与导出」执行一次导出，再回来合并",
             },
         )
-    ready = review_service.export_readiness(db, identity, report)
-    if not ready["ready"]:
+    src = Path(art["xlsxPath"]) if art.get("xlsxPath") else None
+    if src is None or not src.is_file():
         raise HTTPException(
-            status_code=409,
+            status_code=400,
             detail={
-                "error": "NOT_READY",
-                "message": "还有未处理的问题，暂时不能合并导出",
-                "reasons": ready["reasons"],
+                "error": "ARTIFACT_FILE_MISSING",
+                "message": f"导出产物「{art['name']}」的文件已不在（可能已被清理），请重新导出后再合并",
+            },
+        )
+    period_start = str(art.get("periodStart") or "")
+    if not period_start:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "ARTIFACT_NO_PERIOD",
+                "message": "该导出产物缺少周报周期信息，无法确定工作表命名，请重新导出后再合并",
             },
         )
 
-    result = export_service.export_weekly_report(
-        db, identity, report, scope=scope, dpi=dpi, render_png=render_png
-    )
     merged = merge_service.merge_report_into_pending(
         db,
         identity,
-        Path(result.xlsx_path).read_bytes(),
-        # 工作表名按**阶段时间区间**命名（如 261026-261030），
-        # 便于台账按时间轴排列与检索。
-        sheet_title_hint=merge_service.period_sheet_title(report.period_start),
-        batch_id=report.id,
+        src.read_bytes(),
+        sheet_title_hint=merge_service.period_sheet_title(period_start),
+        artifact_id=art["id"],
     )
     return {
         **merged,
-        "artifactId": result.artifact_id,
-        "xlsx": Path(result.xlsx_path).name,
-        "pngs": [Path(p).name for p in result.png_paths],
-        "status": result.status,
-        "error": result.error,
+        "artifactId": art["id"],
+        "artifactName": art["name"],
     }
 
 

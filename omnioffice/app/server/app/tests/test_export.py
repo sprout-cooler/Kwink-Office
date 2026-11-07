@@ -1064,7 +1064,17 @@ class TestDiagLog(unittest.TestCase):
         finally:
             db.close()
         out = self.diag._dump_template_records()
-        self.assertIn("template_versions", out)
+        # 断言「模板记录段能读出」这件事本身，而不是字面表名：
+        #   · 表为空 → 输出 "(template_versions 表为空 …)"
+        #   · 表有行 → 输出 "模板记录 N 条：" + 明细（此时**不含**表名字样）
+        # 早前断言字面 "template_versions"，于是「表非空」时反而失败 ——
+        # 而表是否为空取决于**前面别的用例**留了什么，是典型的脆弱断言。
+        # 真正的失败信号是 except 分支的 "(读取失败 …)"（两种情况都不含表名）。
+        self.assertTrue(
+            "template_versions" in out or "模板记录" in out,
+            f"模板记录段应能读出，实际输出：{out[:200]!r}",
+        )
+        self.assertNotIn("读取失败", out, "诊断日志读不出模板记录")
 
     def test_trace_records_failure(self):
         """导出失败时的 trace 应写入日志。"""

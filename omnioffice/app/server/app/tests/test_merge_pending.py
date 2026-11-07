@@ -16,13 +16,15 @@ import io
 import unittest
 
 from fastapi import HTTPException
+from pathlib import Path
+
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.core.identity import Identity
 from app.db.models import Base, WeeklyMergeRecord, WeeklyPendingFile
-from app.modules.weekly_report import merge_service
+from app.modules.weekly_report import export_service, merge_service
 
 UID = "u1"
 OTHER = "u2"
@@ -235,6 +237,97 @@ class TestIsolation(unittest.TestCase):
         merge_service.save_pending_file(self.db, _ident(OTHER), "别人.xlsx", _xlsx({"x": [["1"]]}))
         self.assertIsNone(merge_service.get_pending_file_meta(self.db, _ident()))
         self.assertEqual(len(merge_service.list_merge_history(self.db, _ident())), 0)
+
+
+class TestMergeUsesExistingArtifact(unittest.TestCase):
+    """v1.0.40：合并用「预览与导出」**已生成**的产物，不再自己重新导出。
+
+    用户原话：「合并周报应该是直接把预览与导出功能页面运行了导出后这步生成的
+    工作表直接合并到合并周报的周报模板里面，不要自己重新生成」，
+    且「合并周报功能页不需要截图」。
+    """
+
+    def setUp(self):
+        self.db = _fresh_db()
+        self.uid = "u1"
+
+    def _make_artifact(self, owner="u1", period_start="2026-11-02", name="周报_devuser_2026-11-02_2026-11-08"):
+        """造一个导出产物记录 + 磁盘文件。"""
+        from app.db.models import ExportArtifact, Report
+
+        rep = Report(owner_uid=owner, period_start=period_start, status="draft")
+        self.db.add(rep)
+        self.db.commit()
+        data = _xlsx({"Sheet1": [["表头"], ["内容"]]})
+        path = merge_service.pending_root() / f"artifact-{rep.id}.xlsx"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        art = ExportArtifact(
+            report_id=rep.id,
+            owner_uid=owner,
+            template_id=None,
+            name=name,
+            xlsx_path=str(path),
+            png_paths=[],
+            scope="content",
+            dpi=192,
+            task_count=1,
+            status="ok",
+            error="",
+        )
+        self.db.add(art)
+        self.db.commit()
+        return art
+
+    def test_no_artifact_returns_none(self):
+        """还没有导出产物 → 返回 None（路由据此给出可行动提示）。"""
+        self.assertIsNone(
+            export_service.get_artifact_for_merge(self.db, _ident(self.uid))
+        )
+
+    def test_picks_latest_artifact(self):
+        """不指定时取最近一次导出。"""
+        from app.db.models import ExportArtifact
+
+        a1 = self._make_artifact()
+        a2 = self._make_artifact()
+        picked = export_service.get_artifact_for_merge(self.db, _ident(self.uid))
+        self.assertEqual(picked["id"], a2.id)
+        self.assertGreater(a2.id, a1.id)
+        self.assertTrue(picked["xlsxExists"])
+        self.assertEqual(picked["periodStart"], "2026-11-02")
+
+    def test_specified_artifact_used(self):
+        art = self._make_artifact()
+        picked = export_service.get_artifact_for_merge(self.db, _ident(self.uid), art.id)
+        self.assertEqual(picked["id"], art.id)
+
+    def test_other_users_artifact_rejected(self):
+        """越权红线：拿不到别人的产物。"""
+        art = self._make_artifact(owner="u2")
+        with self.assertRaises(HTTPException) as ctx:
+            export_service.get_artifact_for_merge(self.db, _ident(self.uid), art.id)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_merge_does_not_create_new_artifact(self):
+        """合并只搬运已有产物，**不新建**导出记录（这是本条需求的核心）。"""
+        from app.db.models import ExportArtifact
+
+        self._make_artifact()
+        before = self.db.scalar(select(func.count()).select_from(ExportArtifact))
+        merge_service.save_pending_file(self.db, _ident(self.uid), "台账.xlsx", _xlsx({"A": [["a"]]}))
+        picked = export_service.get_artifact_for_merge(self.db, _ident(self.uid))
+        merged = merge_service.merge_report_into_pending(
+            self.db,
+            _ident(self.uid),
+            Path(picked["xlsxPath"]).read_bytes(),
+            sheet_title_hint=merge_service.period_sheet_title(picked["periodStart"]),
+            artifact_id=picked["id"],
+        )
+        after = self.db.scalar(select(func.count()).select_from(ExportArtifact))
+        self.assertEqual(before, after, "合并不得新建导出产物")
+        # 工作表名按该产物的周报周期命名（周一→周五）
+        self.assertEqual(merged["sheetName"], "261102-261106")
 
 
 if __name__ == "__main__":

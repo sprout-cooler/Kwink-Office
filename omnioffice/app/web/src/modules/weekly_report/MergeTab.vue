@@ -1,9 +1,15 @@
 <script setup lang="ts">
 /** 周报 · 合并周报（v1.0.35）：待处理文件上传与管理 + 一键合并。
  *
- * 流程：① 上传待处理文件（可随时替换）→ ② 文件持久保存在共享目录
- *      → ③ 点击「合并并导出」→ 执行导出生成 xlsx → 把它复制成
- *         待处理文件里的**一个新工作表** → 就地替换原文件。
+ * 流程（v1.0.40 起）：① 上传待处理文件（可随时替换）→ ② 文件持久保存在共享目录
+ *      → ③ 选一份「预览与导出」**已生成**的产物 → 点「合并」
+ *      → 把那份 xlsx 的工作表复制成待处理文件里的**一个新工作表** → 就地替换原文件。
+ *
+ * 为什么不再自己重新导出（用户明确要求）：
+ *   合并进台账的必须就是用户手里那份文件。重新导出会产生一份「新的」周报，
+ *   与用户刚下载的那份可能不一致（数据在导出后又变了、或模板被换过），
+ *   台账就会和用户手里的对不上。现在直接搬运已有产物，所见即所得。
+ *   连带地，合并**不再渲染 PNG 截图** —— 截图是导出页的事。
  *
  * 两个刻意的设计：
  * - **只留一份待处理文件**：上传即替换，避免多版本让人分不清哪个是最新的。
@@ -14,6 +20,7 @@ import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   weeklyApi,
+  type ExportHistoryItem,
   type MergeRecord,
   type PendingFileMeta,
 } from "@/api/weekly-report";
@@ -28,6 +35,9 @@ import {
 
 const meta = ref<PendingFileMeta | null>(null);
 const history = ref<MergeRecord[]>([]);
+/** 「预览与导出」已生成的产物（合并的来源） */
+const artifacts = ref<ExportHistoryItem[]>([]);
+const selectedArtifactId = ref<number | undefined>(undefined);
 const loading = ref(false);
 const uploading = ref(false);
 /** 上传进度 0~100 —— 没有它用户会以为没上传成功，反复点，白白浪费带宽与磁盘 */
@@ -37,17 +47,22 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const merging = ref(false);
 const error = ref("");
 
-const scope = ref<"content" | "full">("content");
-const dpi = ref(192);
-const renderPng = ref(true);
-
 async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [m, h] = await Promise.all([weeklyApi.pendingFile(), weeklyApi.mergeHistory()]);
+    const [m, h, a] = await Promise.all([
+      weeklyApi.pendingFile(),
+      weeklyApi.mergeHistory(),
+      weeklyApi.exportHistory({ limit: 50 }),
+    ]);
     meta.value = m.item ?? null;
     history.value = h.items ?? [];
+    artifacts.value = a ?? [];
+    // 默认选最近一次导出（后端不传 artifactId 时也是这个语义，保持一致）
+    if (!artifacts.value.some((x) => x.id === selectedArtifactId.value)) {
+      selectedArtifactId.value = artifacts.value[0]?.id;
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -122,14 +137,15 @@ async function onPick(raw: File) {
 }
 
 async function doMerge() {
+  if (!selectedArtifactId.value) {
+    ElMessage.warning("请先选择一份导出产物（先到「预览与导出」执行导出）");
+    return;
+  }
   merging.value = true;
   error.value = "";
   try {
-    const r = await weeklyApi.mergeIntoPending({
-      scope: scope.value,
-      dpi: dpi.value,
-      renderPng: renderPng.value,
-    });
+    // 只搬运「预览与导出」已生成的那份产物，不重新导出、不产截图
+    const r = await weeklyApi.mergeIntoPending({ artifactId: selectedArtifactId.value });
     ElMessage.success(
       `已合并为工作表「${r.sheetName}」，共 ${r.sheetCountAfter} 个工作表（合并前 ${r.sheetCountBefore}）`
     );
@@ -270,32 +286,42 @@ const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString("zh-CN") : 
     </OOCard>
 
     <!-- 2. 合并并导出 -->
-    <OOCard class="blk" title="2. 合并并导出" subtitle="执行导出后，把生成的表格追加为待处理文件的新工作表" flush>
+    <OOCard class="blk" title="2. 合并" subtitle="把「预览与导出」已生成的表格追加为待处理文件的新工作表" flush>
       <div class="pad">
         <div class="opts">
-          <span class="opt-label">口径</span>
-          <el-radio-group v-model="scope" size="small">
-            <el-radio-button value="content">连续内容区</el-radio-button>
-            <el-radio-button value="full">完整表体</el-radio-button>
-          </el-radio-group>
+          <span class="opt-label">合并来源</span>
+          <el-select
+            v-model="selectedArtifactId"
+            placeholder="选择一份导出产物"
+            class="art-select"
+            :disabled="!artifacts.length"
+          >
+            <el-option
+              v-for="a in artifacts"
+              :key="a.id"
+              :label="`${a.name}${a.xlsxExists ? '' : '（文件已丢失）'}`"
+              :value="a.id"
+              :disabled="!a.xlsxExists"
+            />
+          </el-select>
         </div>
-        <div class="opts">
-          <span class="opt-label">DPI</span>
-          <el-input-number v-model="dpi" :min="72" :max="300" :step="24" size="small" />
-          <span class="opt-hint">默认 192（≥192DPI 才够清晰）</span>
-        </div>
-        <div class="opts">
-          <span class="opt-label">截图</span>
-          <el-switch v-model="renderPng" />
-          <span class="opt-hint">{{ renderPng ? "同时渲染区域截图" : "只产出 Excel" }}</span>
-        </div>
+        <p v-if="!artifacts.length" class="tip">
+          还没有导出产物 —— 请先到「预览与导出」执行一次导出，合并会直接使用那份文件。
+        </p>
 
         <div class="acts">
-          <el-button type="primary" :loading="merging" :disabled="!hasFile" @click="doMerge">
+          <el-button
+            type="primary"
+            :loading="merging"
+            :disabled="!hasFile || !selectedArtifactId"
+            @click="doMerge"
+          >
             <span class="oo-btn-icon"><OOIcon name="merge" :size="16" /></span>
-            {{ hasFile ? "合并并导出" : "请先上传待处理文件" }}
+            {{ !hasFile ? "请先上传待处理文件" : !selectedArtifactId ? "请先选择导出产物" : "合并" }}
           </el-button>
-          <span class="opt-hint">合并会在工作簿里新增一个以阶段时间命名的工作表（如 261026-261030），并覆盖保存原文件</span>
+          <span class="opt-hint">
+            把选中产物的表格并入待处理文件，新增一个以阶段时间命名的工作表（如 261026-261030），并覆盖保存原文件
+          </span>
         </div>
 
         <p v-if="!hasFile" class="tip">
@@ -443,9 +469,13 @@ const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString("zh-CN") : 
   flex-wrap: wrap;
 }
 .opt-label {
-  width: 56px;
+  width: 64px;
   font-size: var(--oo-text-sm);
   color: var(--oo-text-secondary);
+}
+.art-select {
+  width: 420px;
+  max-width: 100%;
 }
 .opt-hint {
   font-size: var(--oo-text-xs);

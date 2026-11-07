@@ -1267,6 +1267,40 @@ def _owned_artifact(db: Session, identity: Identity, artifact_id: int) -> Export
     return art
 
 
+def get_artifact_for_merge(
+    db: Session, identity: Identity, artifact_id: int | None = None
+) -> dict | None:
+    """取一个**已生成的导出产物**供「合并周报」使用。
+
+    v1.0.40：合并不再自己重新导出 —— 用户的意思是「预览与导出」跑出来的那份
+    表格，直接把它的工作表并进待处理文件。这样合并进台账的内容与用户在
+    导出页看到的**完全一致**（同一份文件），不会因为重新导出而与用户手里的
+    那份对不上。
+
+    指定 artifact_id → 取该产物；不指定 → 取最近一次（id 倒序第一条）。
+    返回 None 表示还没有任何导出产物（调用方应给出可行动提示）。
+    """
+    if artifact_id:
+        art = _owned_artifact(db, identity, int(artifact_id))
+    else:
+        art = db.scalar(
+            select(ExportArtifact)
+            .where(ExportArtifact.owner_uid == identity.uid)
+            .order_by(ExportArtifact.id.desc())
+            .limit(1)
+        )
+    if art is None:
+        return None
+    dto = _artifact_dto(db, art)
+    return {
+        "id": art.id,
+        "name": art.name,
+        "xlsxPath": art.xlsx_path,
+        "periodStart": dto.get("periodStart", ""),
+        "xlsxExists": bool(dto.get("xlsxExists")),
+    }
+
+
 def list_export_history(
     db: Session, identity: Identity, q: str = "", template_id: int | None = None, limit: int = 200
 ) -> list[dict]:

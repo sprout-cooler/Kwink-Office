@@ -591,6 +591,8 @@ class WeeklyMergeRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_uid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     batch_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    # 源导出产物 id（v1.0.40：合并用的是「预览与导出」已生成的那份 xlsx）
+    artifact_id: Mapped[int] = mapped_column(Integer, default=0, index=True, nullable=False)
     # 本次追加进去的工作表名
     sheet_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     sheet_count_before: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

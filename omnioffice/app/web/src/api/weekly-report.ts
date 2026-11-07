@@ -574,7 +574,9 @@ export const weeklyApi = {
 
   downloadPendingFile: () => downloadFile("/weekly-report/pending-file/download", "待处理文件.xlsx"),
 
-  async mergeIntoPending(opts: { scope: "content" | "full"; dpi: number; renderPng: boolean }) {
+  async mergeIntoPending(opts: { artifactId?: number }) {
+    // v1.0.40：合并不再自己重新导出，而是搬运「预览与导出」已生成的那份产物。
+    // 不传 artifactId = 用最近一次导出。
     return api<MergeOutcome>("/weekly-report/pending-file/merge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

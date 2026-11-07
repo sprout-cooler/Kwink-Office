@@ -248,7 +248,7 @@ def merge_report_into_pending(
     identity: Identity,
     xlsx_bytes: bytes,
     sheet_title_hint: str = "",
-    batch_id: int = 0,
+    artifact_id: int = 0,
 ) -> dict:
     """执行导出后的合并：把周报表格追加成待处理文件的一个**新工作表**，就地替换原文件。
 
@@ -319,7 +319,9 @@ def merge_report_into_pending(
 
     record = WeeklyMergeRecord(
         owner_uid=identity.uid,
-        batch_id=batch_id,
+        batch_id=0,
+        # 源产物 id（v1.0.40：合并用的是导出页已生成的产物，可回溯是哪一次导出）
+        artifact_id=artifact_id,
         sheet_name=title,
         sheet_count_before=before,
         sheet_count_after=after,

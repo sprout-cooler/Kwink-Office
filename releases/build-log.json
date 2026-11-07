@@ -196,5 +196,14 @@
     "fpk": "omnioffice_1.0.39_all_20261107.fpk",
     "commit": "2f415bb",
     "note": "修复跨天工单识别：跨天工单在覆盖的每一天各占一行"
+  },
+  {
+    "ts": "2026-11-07T03:19:39.398Z",
+    "appname": "omnioffice",
+    "version": "1.0.40",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.40_all_20261107.fpk",
+    "commit": "b839aa2",
+    "note": "合并周报改为使用「预览与导出」已生成的产物（不再重新导出、不产截图）"
   }
 ]
