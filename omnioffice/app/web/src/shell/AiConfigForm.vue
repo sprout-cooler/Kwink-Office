@@ -96,7 +96,17 @@ const placeholderFor = computed(() => {
   return "https://…/v1";
 });
 
-const hasKey = computed(() => !!draft.value.api_key || props.config.has_key);
+/** 是否本地/内网端点（Ollama / LM Studio / 内网 vLLM）：
+ *  这类服务不校验 API Key，后端会自动用占位串，所以前端不必强制用户填。
+ *  与后端 _is_local_or_private_host 的判定口径保持一致。 */
+const LOCAL_HOST_RE =
+  /^(?:https?:\/\/)?(?:localhost|127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0|\[?::1\]?|172\.(?:1[6-9]|2\d|3[01])\.|[^/]*\.local)(?:[/:?]|$)/i;
+const isLocalEndpoint = computed(() => LOCAL_HOST_RE.test(effBaseUrl.value.trim()));
+
+/** 能否保存：公网端点仍需 API Key；本地/内网端点免填 */
+const hasKey = computed(
+  () => !!draft.value.api_key || props.config.has_key || isLocalEndpoint.value,
+);
 const keyPlaceholder = computed(() => {
   if (draft.value.api_key) return "已输入，留空则不修改";
   if (props.config.has_key) return `已保存（${props.config.key_masked}），留空不修改`;
@@ -115,6 +125,12 @@ function onProviderChange(pid: string) {
   if (p.models.length > 0) {
     draft.value.model = p.models[0];
     touched.value.model = true;
+  }
+  // 本地自建服务（Ollama 等）不校验 Key，但契约要求非空 → 自动填占位串，
+  // 用户不用再想「该填什么」。切回云端服务商时不清空，由用户自行覆盖。
+  if (p.defaultApiKey) {
+    draft.value.api_key = p.defaultApiKey;
+    touched.value.api_key = true;
   }
 }
 
@@ -260,7 +276,12 @@ async function save() {
         @input="mark('api_key')"
       />
       <div class="field-hint">
-        Key 仅保存在本 NAS，不会回传明文；识别费用由你的模型服务商按量计费
+        <template v-if="isLocalEndpoint">
+          本地 / 内网服务通常<b>不校验 API Key</b>，可留空（后端自动用占位串）；如服务设了 Key 再填。
+        </template>
+        <template v-else>
+          Key 仅保存在本 NAS，不会回传明文；识别费用由你的模型服务商按量计费
+        </template>
       </div>
       <div v-if="isModule && !inherited.api_key" class="field-actions">
         <el-tag size="small" type="success" effect="plain">本模块独立 Key</el-tag>

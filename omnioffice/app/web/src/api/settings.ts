@@ -45,6 +45,8 @@ export interface ProviderPreset {
   placeholder?: string;
   /** 服务商说明（域名迁移提示、优势等） */
   note?: string;
+  /** 本地自建服务的占位 Key（Ollama 等不校验 Key，但契约要求非空） */
+  defaultApiKey?: string;
 }
 
 export interface AppSettingMeta {

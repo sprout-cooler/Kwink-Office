@@ -110,12 +110,17 @@ def _resolve_config(owner: str) -> dict[str, str]:
     连接中断等情况会以裸 OperationalError 冒泡成「无信息 500」，
     用户只看到"识别失败"，无从判断是自己的问题还是服务的问题。
     """
-    from ...core.settings_service import resolve_ai
+    from ...core.settings_service import resolve_ai, get_app_settings
     from ...db.session import SessionLocal
+    from ..weekly_report.vlm import _effective_api_key, TIMEOUT_S
 
     db = SessionLocal()
     try:
         cfg = resolve_ai(db, MODULE_ID, owner=owner)
+        try:
+            timeout_s = int(get_app_settings(db, owner=owner)["recognize_timeout_s"]["value"])
+        except Exception:  # noqa: BLE001
+            timeout_s = TIMEOUT_S
     except ImageToolError:
         raise
     except Exception as e:  # noqa: BLE001 —— DB 层异常统一转可行动提示
@@ -125,9 +130,12 @@ def _resolve_config(owner: str) -> dict[str, str]:
     finally:
         db.close()
     return {
-        "api_key": cfg["api_key"],
+        # 本地/内网端点（Ollama 等）不校验 Key，空 Key 自动用占位串，
+        # 与周报识别共用同一套判定，避免两处规则不一致。
+        "api_key": _effective_api_key(cfg["api_key"], cfg["base_url"]),
         "base_url": ensure_url_scheme(cfg["base_url"].rstrip("/")),
         "model": cfg["model"],
+        "timeout_s": str(timeout_s),
     }
 
 
@@ -139,7 +147,7 @@ def _post(cfg: dict[str, str], payload: dict[str, Any], _retried: bool = False) 
         method="POST",
     )
     try:
-        with urlreq.urlopen(req, timeout=TIMEOUT_S) as resp:
+        with urlreq.urlopen(req, timeout=int(cfg.get("timeout_s", TIMEOUT_S))) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urlreq.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300]

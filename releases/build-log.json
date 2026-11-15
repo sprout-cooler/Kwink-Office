@@ -214,5 +214,14 @@
     "fpk": "omnioffice_1.0.41_all_20261107.fpk",
     "commit": "5782608",
     "note": "修复周报时间表头合并区丢失 + C列日期改用自定义格式 m月d日"
+  },
+  {
+    "ts": "2026-11-15T12:59:14.576Z",
+    "appname": "omnioffice",
+    "version": "1.0.42",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.42_all_20261115.fpk",
+    "commit": "71ad0f1",
+    "note": "本地大模型接入：Ollama 服务商预设 + 内网端点免填 Key + 识别超时可配置"
   }
 ]

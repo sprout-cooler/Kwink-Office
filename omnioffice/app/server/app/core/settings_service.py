@@ -226,6 +226,53 @@ def _qwen_provider(pid: str, label: str, base_url: str, note: str) -> dict:
     }
 
 
+# ---- 本地 / 局域网 Ollama 预设（v1.0.42）----------------------------------
+#
+# 周报识别是「截图 → 结构化 JSON」，必须用**视觉模型**；纯文本模型（deepseek-r1、
+# qwen3:8b、llama3.2 等）填上去会返回空结果或 400，所以这里只列 VLM。
+# 体积/显存按 8 GB 显卡给参考值，实际以 ollama list 显示的名字为准。
+OLLAMA_VL_MODELS = [
+    {
+        "id": "qwen2.5vl:7b",
+        "label": "qwen2.5vl:7b（推荐 · 中文截图最稳）",
+        "tier": "recommended",
+        "desc": "约 6 GB，8 GB 显存可跑。中文 OCR 与 JSON 结构化输出相对最稳，周报首选。",
+    },
+    {
+        "id": "qwen3-vl:8b",
+        "label": "qwen3-vl:8b（新一代 · 显存吃紧）",
+        "tier": "strong",
+        "desc": "约 6.5 GB，8 GB 显存上可能需要更低量化；能力更强但更易超时。",
+    },
+    {
+        "id": "gemma3:4b",
+        "label": "gemma3:4b（轻量 · 显存友好）",
+        "tier": "light",
+        "desc": "约 3.3 GB，速度最快；中文工单识别偏弱，仅建议作连通性验证。",
+    },
+    {
+        "id": "minicpm-v",
+        "label": "minicpm-v（备选）",
+        "tier": "light",
+        "desc": "约 5 GB，中文表现中等。",
+    },
+    {
+        "id": "llava:7b",
+        "label": "llava:7b（仅协议验证）",
+        "tier": "light",
+        "desc": "约 4.7 GB，中文工单识别较弱，不建议生产使用。",
+    },
+]
+
+_OLLAMA_NOTE = (
+    "本地 / 局域网自建模型。必须选视觉（VL）模型，纯文本模型无法识别截图。"
+    "把地址里的 <PC_IP> 换成跑 Ollama 的电脑的局域网 IP；"
+    "Ollama 默认只监听 127.0.0.1，需设置 OLLAMA_HOST=0.0.0.0:11434 并放行防火墙。"
+    "PC 关机或 Ollama 退出时周报识别会失败，建议保留云端配置作为兜底。"
+    "本地端点可留空 API Key（系统自动填占位串）；若你的服务设了 Key 再如实填写。"
+)
+
+
 AI_PROVIDERS = [
     {
         "id": "qwen_workspace",
@@ -267,6 +314,21 @@ AI_PROVIDERS = [
         "label": "豆包（火山方舟）",
         "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
         "models": [],  # 方舟按 endpoint id（ep-xxxx）调用，用户自填
+    },
+    {
+        "id": "ollama",
+        "label": "Ollama（本地 / 局域网自建）",
+        # 端口固定但 IP 因机器而异，留空让用户把 <PC_IP> 换成实际地址。
+        # 内网地址会被 ensure_url_scheme 自动补 http://，无需用户记协议头。
+        "baseUrl": "http://<PC_IP>:11434/v1",
+        # 常用视觉模型（周报识别必须支持图像输入，纯文本模型不列入）。
+        "models": ["qwen2.5vl:7b", "qwen3-vl:8b", "gemma3:4b", "minicpm-v", "llava:7b"],
+        "modelDetails": OLLAMA_VL_MODELS,
+        "placeholder": "http://192.168.31.182:11434/v1",
+        "note": _OLLAMA_NOTE,
+        # 本地服务不校验 Key，但本项目契约要求非空 → 自动填占位串。
+        # 前端 onProviderChange 会把这个值写进 api_key 输入框。
+        "defaultApiKey": "ollama",
     },
     {
         "id": "custom",
@@ -497,9 +559,15 @@ def _list_module_overrides(db: Session, module: str, owner: str = "") -> dict[st
 # 应用级配置白名单（分类设置页的「通用」分组）
 APP_SETTING_KEYS = {
     "recognize_workers": {"label": "识别并发数", "type": "int", "min": 1, "max": 8,
-                          "desc": "同时提交给大模型的截图数。调高更快但更费额度，默认 3"},
+                          "desc": "同时提交给大模型的截图数。调高更快但更费额度，默认 3；本地模型建议 1"},
     "upload_max_mb": {"label": "单张截图大小上限（MB）", "type": "int", "min": 1, "max": 50,
                        "desc": "超过此大小的图片会被拒绝上传，默认 10"},
+    # v1.0.42：本地模型首次加载常超 60 秒（原硬编码），改为设置页可调。
+    "recognize_timeout_s": {
+        "label": "单次识别超时（秒）", "type": "int", "min": 30, "max": 600,
+        "default": 60,
+        "desc": "等待模型返回的最长时间，默认 60。本地模型冷启动慢时可调到 180~300",
+    },
 }
 
 
@@ -511,10 +579,11 @@ def get_app_settings(db: Session, owner: str = "") -> dict[str, Any]:
         raw = _read(db, owner, f"app.{key}")
         if not raw:
             raw = str(getattr(env, key, "") or "")
+        fallback = int(meta.get("default", meta.get("min", 1)))
         try:
-            val = int(raw) if raw else int(meta.get("min", 1))
+            val = int(raw) if raw else fallback
         except ValueError:
-            val = int(meta.get("min", 1))
+            val = fallback
         out[key] = {"value": max(meta["min"], min(meta["max"], val)), **meta}
     return out
 

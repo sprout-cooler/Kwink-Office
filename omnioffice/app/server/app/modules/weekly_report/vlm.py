@@ -203,17 +203,37 @@ def _normalize_wechat_summary(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+# 本地/内网 OpenAI 兼容服务（Ollama / LM Studio / LocalAI / vLLM）**不校验
+# API Key**，但本项目契约多处要求非空。给一个固定占位串，既满足校验又不产生
+# 任何费用；公网端点仍必须填真 Key。
+LOCAL_PLACEHOLDER_KEY = "ollama"
+
+
+def _effective_api_key(api_key: str, base_url: str) -> str:
+    """内网端点允许空 Key → 返回占位串；公网端点原样返回（空就是空）。"""
+    from ...core.settings_service import _is_local_or_private_host
+
+    if api_key and api_key.strip():
+        return api_key.strip()
+    if base_url and _is_local_or_private_host(base_url):
+        return LOCAL_PLACEHOLDER_KEY
+    return ""
+
+
 class OpenAICompatibleRecognizer:
     """OpenAI-compatible chat/completions 视觉识别。"""
 
     available = True
 
-    def __init__(self, api_key: str, base_url: str, model: str, json_mode: bool = True):
-        if not api_key:
-            raise RecognizeError("LLM_API_KEY 为空")
-        self.api_key = api_key
+    def __init__(
+        self, api_key: str, base_url: str, model: str,
+        json_mode: bool = True, timeout_s: int = TIMEOUT_S,
+    ):
+        self.api_key = _effective_api_key(api_key, base_url)
         self.base_url = ensure_url_scheme(base_url.rstrip("/"))
         self.model = model
+        # 单次识别超时（v1.0.42 起可由设置页调整）：本地模型冷启动常超 60 秒。
+        self.timeout_s = max(1, int(timeout_s or TIMEOUT_S))
         # 是否发送 response_format=json_object。
         # 百炼 qwen3 系列支持；豆包/自建网关不一定支持，遇到 400 会自动降级并记住结果。
         self.json_mode = json_mode
@@ -302,7 +322,7 @@ class OpenAICompatibleRecognizer:
             method="POST",
         )
         try:
-            with urlreq.urlopen(req, timeout=TIMEOUT_S) as resp:
+            with urlreq.urlopen(req, timeout=self.timeout_s) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urlreq.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:300]
@@ -332,22 +352,29 @@ def build_recognizer(module: str | None = None, owner: str = ""):
     owner 为当前账号的数据归属键：不同账号各用自己的 Key/模型，互不影响。
     """
     from ...db.session import SessionLocal
-    from ...core.settings_service import resolve_ai
+    from ...core.settings_service import resolve_ai, get_app_settings
 
     db = SessionLocal()
     try:
         cfg = resolve_ai(db, module, owner=owner)
+        # 每次识别都重读：设置页改完超时立即生效，不用重启容器。
+        try:
+            timeout_s = int(get_app_settings(db, owner=owner)["recognize_timeout_s"]["value"])
+        except Exception:  # noqa: BLE001 —— 设置读取失败不能拖垮识别
+            timeout_s = TIMEOUT_S
     finally:
         db.close()
 
-    if not cfg["api_key"]:
-        return None
     if not cfg["base_url"] or not cfg["model"]:
         return None
+    effective_key = _effective_api_key(cfg["api_key"], cfg["base_url"])
+    if not effective_key:
+        return None
     return OpenAICompatibleRecognizer(
-        api_key=cfg["api_key"],
+        api_key=effective_key,
         base_url=cfg["base_url"],
         model=cfg["model"],
+        timeout_s=timeout_s,
     )
 
 
@@ -384,7 +411,8 @@ def probe_connection(base_url: str, model: str, api_key: str, timeout: int = 15)
 
     返回 (是否成功, 面向用户的中文提示)。设置页「测试连接」按钮使用。
     """
-    if not api_key:
+    effective_key = _effective_api_key(api_key, base_url)
+    if not effective_key:
         return False, "API Key 为空"
     if not base_url:
         return False, "服务地址为空"
@@ -401,7 +429,7 @@ def probe_connection(base_url: str, model: str, api_key: str, timeout: int = 15)
     req = urlreq.Request(
         url=f"{url}/chat/completions",
         data=payload,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {effective_key}"},
         method="POST",
     )
     try:
