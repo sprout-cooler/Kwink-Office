@@ -223,5 +223,14 @@
     "fpk": "omnioffice_1.0.42_all_20261115.fpk",
     "commit": "71ad0f1",
     "note": "本地大模型接入：Ollama 服务商预设 + 内网端点免填 Key + 识别超时可配置"
+  },
+  {
+    "ts": "2026-11-15T14:26:16.147Z",
+    "appname": "omnioffice",
+    "version": "1.0.43",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.43_all_20261115.fpk",
+    "commit": "08253b8",
+    "note": "周报手工补充新增结构化下周工作计划 + 修复识别校对标题可编辑"
   }
 ]

@@ -496,22 +496,135 @@ def summary_of(db: Session, identity: Identity, report: Report) -> dict[str, Any
 
 # ---------------------------------------------------------------- 手工补充
 
+# v1.0.43：新增「下周工作计划」结构化补充。
+# 与 issues/demands 的整段文本不同，planTasks 是 JSON 数组，每条含
+# title / startTime / endTime / weekday（0~7，与识别校对的星期下拉同口径）。
 MANUAL_FIELDS = ("issues", "demands")
+MANUAL_PLAN_KEY = "plan_tasks"
+MANUAL_PLAN_MAX = 20          # 最多 20 条，防止提示词/表格被撑爆
+MANUAL_TITLE_MAX = 500
+MANUAL_TIME_MAX = 120
+WEEKDAY_LABELS = ("未指定", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
+
+def _weekday_label(v: int) -> str:
+    return WEEKDAY_LABELS[v] if 0 <= v <= 7 else "未指定"
+
+
+def normalize_plan_tasks(raw: Any) -> list[dict[str, Any]]:
+    """校验并归一化前端提交的结构化计划任务。
+
+    - 只保留白名单字段，杜绝把任意对象塞进库；
+    - 空标题行直接丢弃（用户点了「添加任务」但没填内容时不应占一行）；
+    - weekday 非 0~7 一律归 0，不猜；
+    - 时间保留**原文**，不做归一化 —— 下周计划是「打算做什么」，
+      时间只是备注，拼进 xlsx 时原样展示即可（与本周任务不同，后者要归星期块）。
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        # 容错：个别老客户端可能把 JSON 当字符串传
+        import json
+
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "BAD_PLAN_TASKS", "message": "下周计划任务格式不正确"},
+            ) from None
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "BAD_PLAN_TASKS", "message": "下周计划任务必须是列表"},
+        )
+    if len(raw) > MANUAL_PLAN_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "TOO_MANY_PLAN_TASKS", "message": f"下周计划最多 {MANUAL_PLAN_MAX} 条"},
+        )
+
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        start = str(item.get("startTime") or "").strip()
+        end = str(item.get("endTime") or "").strip()
+        if not title and not start and not end:
+            continue  # 完全空白行
+        if len(title) > MANUAL_TITLE_MAX or len(start) > MANUAL_TIME_MAX or len(end) > MANUAL_TIME_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "TOO_LONG", "message": "下周计划的标题或时间过长"},
+            )
+        try:
+            wd = int(item.get("weekday") or 0)
+        except (TypeError, ValueError):
+            wd = 0
+        if not 0 <= wd <= 7:
+            wd = 0
+        out.append({"title": title, "startTime": start, "endTime": end, "weekday": wd})
+    return out
+
+
+def format_plan_task_line(task: dict[str, Any]) -> str:
+    """把一条结构化计划拼成写入 D:F 合并槽位的一行文本。
+
+    格式（四字段齐全时）：「星期一 11月9日 10:00-11月9日 12:00｜任务标题」
+    缺字段时按 星期 → 时间 → 标题 顺序省略，绝不输出空括号或连续分隔符。
+    """
+    parts: list[str] = []
+    wd = task.get("weekday") or 0
+    if wd:
+        parts.append(_weekday_label(int(wd)))
+    start = str(task.get("startTime") or "").strip()
+    end = str(task.get("endTime") or "").strip()
+    if start and end:
+        parts.append(f"{start}-{end}")
+    elif start or end:
+        parts.append(start or end)
+    prefix = " ".join(parts)
+    title = str(task.get("title") or "").strip()
+    if prefix and title:
+        return f"{prefix}｜{title}"
+    return prefix or title
+
+
+def load_plan_tasks(db: Session, report: Report) -> list[dict[str, Any]]:
+    """读取本批次的结构化下周计划（供导出与预览共用）。"""
+    import json
+
+    from ...db.models import Setting
+
+    key = f"manual.{report.id}.{MANUAL_PLAN_KEY}"
+    row = db.scalar(select(Setting).where(Setting.key == key))
+    if row is None or not row.value:
+        return []
+    try:
+        data = json.loads(row.value)
+    except (ValueError, TypeError):
+        return []  # 历史脏数据不阻断导出
+    return normalize_plan_tasks(data)
 
 
 def get_manual(db: Session, identity: Identity, report: Report) -> dict[str, Any]:
-    """重点问题（模板 19-20 行）/ 工作需求（21-22 行）文本。"""
+    """重点问题（模板 19-20 行）/ 工作需求（21-22 行）文本 + 结构化下周计划。"""
     from ...db.models import Setting
 
     stored = {}
     for row in db.scalars(select(Setting).where(Setting.key.like(f"manual.{report.id}.%"))):
         stored[row.key.rsplit(".", 1)[-1]] = row.value
-    return {k: stored.get(k, "") for k in MANUAL_FIELDS}
+    out = {k: stored.get(k, "") for k in MANUAL_FIELDS}
+    out["planTasks"] = load_plan_tasks(db, report)
+    return out
 
 
 def save_manual(
     db: Session, identity: Identity, report: Report, body: dict[str, Any]
 ) -> dict[str, Any]:
+    import json
+
     from ...db.models import Setting
 
     changed: list[str] = []
@@ -521,16 +634,29 @@ def save_manual(
         val = str(body[key] or "").strip()
         if len(val) > 4000:
             raise HTTPException(status_code=400, detail={"error": "TOO_LONG", "message": f"{key} 内容过长（上限 4000 字）"})
-        setting_key = f"manual.{report.id}.{key}"
-        row = db.scalar(select(Setting).where(Setting.key == setting_key))
-        if row is None:
-            db.add(Setting(key=setting_key, value=val))
-        else:
-            row.value = val
+        _write_manual_setting(db, report, key, val)
         changed.append(key)
+
+    # 结构化下周计划：单独按 JSON 存，不能走上面的 str() 文本分支
+    if "planTasks" in body:
+        tasks = normalize_plan_tasks(body["planTasks"])
+        _write_manual_setting(db, report, MANUAL_PLAN_KEY, json.dumps(tasks, ensure_ascii=False))
+        changed.append("planTasks")
+
     db.commit()
     audit.log("manual.save", identity.uid, {"reportId": report.id, "fields": changed})
     return get_manual(db, identity, report)
+
+
+def _write_manual_setting(db: Session, report: Report, key: str, val: str) -> None:
+    from ...db.models import Setting
+
+    setting_key = f"manual.{report.id}.{key}"
+    row = db.scalar(select(Setting).where(Setting.key == setting_key))
+    if row is None:
+        db.add(Setting(key=setting_key, value=val))
+    else:
+        row.value = val
 
 
 # ---------------------------------------------------------------- 导出卡点

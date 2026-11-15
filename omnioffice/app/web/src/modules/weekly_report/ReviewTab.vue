@@ -48,6 +48,13 @@ const periodStart = ref("");
  *  所以草稿挂在父组件，行内输入框与日历面板共用同一份，互不覆盖。 */
 const timeDraft = reactive<Record<number, { start: string; end: string }>>({});
 
+/** 行内标题草稿：id → 当前输入框文本。
+ *  v1.0.43 修复：原来用 `@blur="(v: string) => onTitleBlur(row, v)"`，
+ *  但 el-input 的 blur 事件参数是 **FocusEvent**（不是字符串），
+ *  `val.trim()` 会抛 `TypeError: val.trim is not a function` → 标题看着能点、
+ *  实际改不了。改为 v-model 绑本地草稿，失焦时读草稿提交，不依赖事件参数。 */
+const titleDraft = reactive<Record<number, string>>({});
+
 // 原图对照抽屉
 const compareTask = ref<TaskItemDto | null>(null);
 
@@ -117,6 +124,7 @@ async function refresh() {
     // 每次刷新都重置草稿：以服务端归一化后的结果为准
     for (const t of r) {
       timeDraft[t.id] = { start: toEditable(t.startAt), end: toEditable(t.endAt) };
+      titleDraft[t.id] = t.title;
     }
     // 客户下拉：独立加载，失败不影响主流程（周报是主功能，客户联动是增强）
     try {
@@ -151,15 +159,29 @@ async function save(task: TaskItemDto, patch: Record<string, unknown>, okMsg?: s
     ElMessage.error(e instanceof Error ? e.message : String(e));
     // 保存失败：草稿回退到服务端值，避免界面停留在没保存上的文本
     timeDraft[task.id] = { start: toEditable(task.startAt), end: toEditable(task.endAt) };
+    if ("title" in patch) titleDraft[task.id] = task.title;
   } finally {
     saving.value = null;
   }
 }
 
-async function onTitleBlur(t: TaskItemDto, val: string) {
+async function onTitleBlur(t: TaskItemDto) {
+  const val = titleDraft[t.id] ?? t.title;
   const title = val.trim();
-  if (!title || title === t.title) return;
+  // 空标题不允许提交：回退草稿，避免界面留下看似保存成功的空值
+  if (!title) {
+    titleDraft[t.id] = t.title;
+    return;
+  }
+  if (title === t.title) return;
+  const before = t.title;
   await save(t, { title }, "标题已更新");
+  // save() 成功会把 items[idx] 换成服务端对象；失败时已在 catch 回退草稿，
+  // 这里仅在草稿仍是本次提交值时同步，避免覆盖回退结果。
+  if (titleDraft[t.id] === title) {
+    const idx = items.value.findIndex((x) => x.id === t.id);
+    titleDraft[t.id] = idx >= 0 ? items.value[idx].title : before;
+  }
 }
 
 /** 时间编辑：把 ISO 回显成人类可读的原图写法，便于用户照原图改 */
@@ -221,6 +243,7 @@ async function removeTask(t: TaskItemDto) {
     await weeklyApi.removeTask(t.id);
     items.value = items.value.filter((x) => x.id !== t.id);
     delete timeDraft[t.id];
+    delete titleDraft[t.id];
     ElMessage.success("已删除");
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
@@ -241,6 +264,7 @@ async function submitCreate() {
     });
     items.value.push(t);
     timeDraft[t.id] = { start: toEditable(t.startAt), end: toEditable(t.endAt) };
+    titleDraft[t.id] = t.title;
     draft.value = { title: "", partition: "offline_done", startTime: "", endTime: "" };
     creating.value = false;
     ElMessage.success("已手工新增");
@@ -476,10 +500,11 @@ async function confirmAllVisible() {
           <el-table-column label="任务标题" min-width="220">
             <template #default="{ row }: { row: TaskItemDto }">
               <el-input
-                :model-value="row.title"
+                v-model="titleDraft[row.id]"
                 size="small"
-                placeholder="任务标题"
-                @blur="(v: string) => onTitleBlur(row, v)"
+                placeholder="任务标题（可编辑，失焦保存）"
+                @blur="onTitleBlur(row)"
+                @keyup.enter="($event.target as HTMLInputElement).blur()"
               />
             </template>
           </el-table-column>

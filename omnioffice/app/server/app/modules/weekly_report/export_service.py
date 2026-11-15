@@ -915,7 +915,8 @@ def export_weekly_report(
             # 不传 title_text：保留模板原标题「本周工作总结」，与模板逐字一致
             issue_text=manual.get("issues", ""),
             demand_text=manual.get("demands", ""),
-            plan_texts=plan_titles,
+            # v1.0.43：把手动补充的结构化计划与识别出的计划两路组装后写入
+            plan_texts=build_plan_lines(db, report, plan_titles),
         )
         wb.save(xlsx_path)
     except AnchorError as e:
@@ -1028,6 +1029,43 @@ def _get_manual_texts(db: Session, report: Report) -> dict[str, str]:
     for row in db.scalars(select(Setting).where(Setting.key.like(f"manual.{report.id}.%"))):
         out[row.key.rsplit(".", 1)[-1]] = row.value
     return out
+
+
+# ---- 下周计划：两路数据组装（v1.0.43）----------------------------------
+#
+# 用户拍板（2026-11-15）：
+#   ① 手动补充的每条任务按「星期 + 起止时间｜标题」四字段拼成**一行文本**，
+#      写入模板现有的 D:F 横向合并槽位（不改模板、兼容全部已上传模板）；
+#   ② 手动补充的任务与「任务上传 → 下周工作计划分区」识别出的任务
+#      **两路独立分行展示**，两路都有时加小标题区分来源。
+#
+# 单路场景不加小标题：只有识别任务时保持与 v1.0.42 完全一致的版式，
+# 只有手动补充时也没必要多一行标签 —— 避免无谓改变既有周报外观。
+PLAN_SECTION_MANUAL = "【手工补充】"
+PLAN_SECTION_RECOGNIZED = "【截图识别】"
+
+
+def build_plan_lines(
+    db: Session, report: Report, recognized_titles: Sequence[str]
+) -> list[str]:
+    """把两路下周计划组装成逐行写入 xlsx 的文本列表。
+
+    - manual 路：结构化四字段 → format_plan_task_line
+    - recognized 路：沿用原有行为，只写任务标题（该分区时间非必填）
+    - 两路都有：各自加一行小标题，手动补充在前
+    """
+    from .review_service import format_plan_task_line, load_plan_tasks
+
+    manual = [
+        line
+        for line in (format_plan_task_line(t) for t in load_plan_tasks(db, report))
+        if line
+    ]
+    recognized = [str(t).strip() for t in recognized_titles if t and str(t).strip()]
+
+    if manual and recognized:
+        return [PLAN_SECTION_MANUAL, *manual, PLAN_SECTION_RECOGNIZED, *recognized]
+    return manual or recognized
 
 
 def _summary_counts(db: Session, identity: Identity, report: Report) -> dict[str, int]:

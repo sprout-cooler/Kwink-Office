@@ -166,9 +166,19 @@ export interface WechatSummary {
   source: "" | "ai" | "manual";
 }
 
+/** 手动补充的下周计划任务（v1.0.43：结构化，替代整段文本） */
+export interface ManualPlanTask {
+  title: string;
+  startTime: string;
+  endTime: string;
+  /** 0=未指定，1=周一 … 7=周日（与识别校对的星期下拉同口径） */
+  weekday: number;
+}
+
 export interface ManualData {
   issues: string;
   demands: string;
+  planTasks: ManualPlanTask[];
 }
 
 export interface ReadinessItem {
