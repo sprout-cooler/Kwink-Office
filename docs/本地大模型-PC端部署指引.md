@@ -6,23 +6,35 @@
 > 本指引只讲**怎么在 PC 上把模型服务跑起来**；软件侧怎么填地址见
 > [`本地大模型-软件接入指引.md`](本地大模型-软件接入指引.md)。
 
-> ## ✅ 本机当前状态（2026-11-15 已由我完成的部分）
+> ## ✅ 本机当前状态（2026-11-17 更新：模型已装好并验收通过）
 >
 > | 项 | 状态 |
 > |---|---|
 > | Ollama **0.40.16** 安装到 `E:\Ollama` | ✅ 已完成（Inno Setup `/DIR`，静默安装） |
-> | 模型目录 `OLLAMA_MODELS=E:\Ollama\models` | ✅ 已设，**以后拉模型不会占 C 盘** |
-> | `OLLAMA_HOST=0.0.0.0:11434` / `OLLAMA_ORIGINS=*` / `OLLAMA_KEEP_ALIVE=-1` | ✅ 已设为用户级环境变量 |
+> | 模型目录 `OLLAMA_MODELS=E:\Ollama\models` | ✅ 已设，**模型确实落在 E 盘，C 盘未占用** |
+> | `OLLAMA_HOST=0.0.0.0:11434` / `OLLAMA_ORIGINS=*` / `OLLAMA_KEEP_ALIVE=-1` | ✅ 已设 |
 > | 服务监听 `0.0.0.0:11434`、局域网 IP 可访问 | ✅ 已验证 |
 > | CUDA 识别 RTX 4060 Laptop（8 GiB，可用 6.9 GiB） | ✅ 已验证 |
-> | **模型** | ⏸ **按你要求未下载**（硬盘空间紧）；`ollama list` 为空 |
+> | **视觉模型 `qwen2.5vl:7b`** | ✅ **已下载并验收**（6.0 GB，实占 5.6 GB） |
+> | 视觉识别实测 | ✅ 真实图片识别出「任务/客户/日期」；OpenAI 兼容层 `/v1/chat/completions` 也通过 |
+> | 开机自启 | ✅ 已建计划任务 `OllamaServe-AutoStart`（登录时启动，环境变量齐全） |
 > | 防火墙限定来源仅 NAS | ⚠️ **未建成**（需管理员权限），但 NAS → PC 实测 HTTP 200 已通 |
 >
-> 所以你接下来只需做两件事：**① 挑时间拉一个视觉模型**（§3 第 3 步）、
-> **② 可选：用管理员 PowerShell 补一条防火墙规则**（§4.2）。
+> **保存位置（你要求罗列的）**：
 >
-> ⚠️ 服务是我用 `ollama serve` 在后台命令行启动的，**关掉那个终端/会话就停了**。
-> 要长期常驻，请用下面的「开机自启」方案（§5 末尾）。
+> | 内容 | 路径 | 大小 |
+> |---|---|---|
+> | 主权重（Q4_K_M） | `E:\Ollama\models\blobs\sha256-4378fc10f44a...` | 4466 MB |
+> | 视觉投影（mmproj） | `E:\Ollama\models\blobs\sha256-d50cf590c226...` | 1291 MB |
+> | 模型清单/别名 | `E:\Ollama\models\manifests\` / `manifests-v2\` | 几 KB |
+> | Ollama 程序本体 | `E:\Ollama\ollama.exe` 等 | ~200 MB |
+> | 下载/运行日志 | `E:\Ollama\_installer\` | 若干 KB |
+>
+> 模型有两个名字、**共享同一份权重**（不重复占空间）：`qwen2.5vl:7b`（软件里填这个）
+> 与 `modelscope.cn/DevQuasar/iapp.Qwen2.5-VL-7B-Instruct-GGUF:Q4_K_M`（实际下载源）。
+>
+> ⚠️ 下载用的是**魔搭 ModelScope 国内镜像**（官方源 1 MB/s 要 1.5 小时，魔搭 24 MB/s 约 4 分钟）。
+> 以后要拉别的模型，同样用 `ollama pull modelscope.cn/<用户>/<仓库>:<tag>` 前缀更快。
 
 ---
 
@@ -96,10 +108,20 @@
    ```powershell
    ollama --version
    ```
-3. 拉取视觉模型（首次约 6 GB，视网速可能十几分钟）：
+3. 拉取视觉模型（约 6 GB）。**强烈建议走魔搭国内镜像** —— 实测官方源只有 1 MB/s
+   （要 1.5 小时），魔搭 24 MB/s（约 4 分钟）：
    ```powershell
+   # 推荐：魔搭镜像（快）
+   ollama pull modelscope.cn/DevQuasar/iapp.Qwen2.5-VL-7B-Instruct-GGUF:Q4_K_M
+   # 拉完后建官方别名，这样软件里填 qwen2.5vl:7b 即可（共享权重，不重复占空间）
+   echo FROM modelscope.cn/DevQuasar/iapp.Qwen2.5-VL-7B-Instruct-GGUF:Q4_K_M > Modelfile.qwen
+   ollama create qwen2.5vl:7b -f Modelfile.qwen
+
+   # 备选：官方源（慢，不推荐）
    ollama pull qwen2.5vl:7b
    ```
+   > ⚠️ 两个坑：① 魔搭模型名是 `qwen2.5vl`（无连字符），别写成 `qwen2-vl`；
+   > ② `ollama create -f -`（stdin）在本机 0.40.16 上不识别，必须写成实际文件。
 4. 确认模型在列表里：
    ```powershell
    ollama list
@@ -224,14 +246,16 @@ Win+R 输入  shell:startup  回车
 ## 7. 验收清单（部署完成后逐条打勾）
 
 - [x] `ollama --version` 有输出（0.40.16）
-- [ ] `ollama list` 能看到 `qwen2.5vl:7b` ← **只剩这一步，等你挑时间拉**
+- [x] `ollama list` 能看到 `qwen2.5vl:7b`（6.0 GB，别名 + 魔搭源共享权重）
+- [x] 真实视觉识别通过（图片 → 读出任务/客户/日期）；OpenAI 兼容层 `/v1/chat/completions` 通过
 - [x] `netstat -an | findstr 11434` 显示 `0.0.0.0:11434 LISTENING`
-- [ ] 防火墙规则限定来源为 NAS IP（可选加固，需管理员权限）
-- [x] PC 上 `curl http://192.168.31.182:11434/api/tags` 返回模型列表（当前 `{"models":[]}`）
+- [x] PC 上 `curl http://192.168.31.182:11434/api/tags` 返回模型列表（已非空）
 - [x] NAS 上 `curl http://192.168.31.182:11434/api/tags` 返回 **HTTP 200**（已实测）
+- [x] 已配置开机自启（计划任务 `OllamaServe-AutoStart`，登录触发）
+- [ ] 防火墙规则限定来源为 NAS IP（可选加固，需管理员权限）
 - [ ] （更严格）`omnioffice-api` 容器内也能访问上面地址 ← 真机验证，交给你
-- [ ] 拉完模型后预热常驻，首次识别不超 60 秒（v1.0.42 起超时可在设置页调）
-- [ ] 已配置开机自启 + 工作时段不休眠
+- [ ] PC 工作时段不休眠（系统电源设置，需你确认）
+- [ ] 首次识别耗时 69.6 秒（冷加载）→ 建议软件设置页把超时调到 180；预热后应 < 10 秒
 
 ---
 
