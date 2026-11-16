@@ -26,6 +26,7 @@ from typing import Any
 from urllib import request as urlreq
 
 from ...core.settings_service import ensure_url_scheme
+from ..weekly_report.vision_image import prepare_image
 from .errors import ImageToolError, ai_not_configured, ocr_failed
 
 MODULE_ID = "image_tool"
@@ -73,7 +74,10 @@ def ocr_path(path: Path, owner: str = "") -> dict[str, Any]:
 
     mime = _mime_for(path)
     try:
-        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        # 与周报识别共用缩放逻辑：超大图等比缩到长边 1536，
+        # 避免本地 VLM 上下文超限（HTTP 400）。小图字节不变。
+        raw, _ = prepare_image(path)
+        b64 = base64.b64encode(raw).decode("ascii")
     except OSError as e:
         print(f"[image_tool] OCR 读文件失败 {path}: {type(e).__name__}: {e}", flush=True)
         raise ImageToolError(

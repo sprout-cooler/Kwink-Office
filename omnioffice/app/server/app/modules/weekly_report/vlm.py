@@ -19,6 +19,7 @@ from urllib import request as urlreq
 # 协议头补全统一走 settings_service（单一事实来源）：
 # 早期此处与 settings_service 各存一份实现，规则一旦调整极易漏改。
 from ...core.settings_service import AI_PROVIDERS, ensure_url_scheme
+from .vision_image import prepare_image
 
 PROMPT_V3 = """你是工作截图信息抽取助手。截图有两类，先判断类型再抽取，只输出一个 JSON 对象。
 
@@ -247,9 +248,11 @@ class OpenAICompatibleRecognizer:
         path = Path(image_path)
         if not path.is_file():
             raise RecognizeError(f"图片不存在：{image_path}")
-        suffix = path.suffix.lower()
-        mime = {".png": "image/png", ".webp": "image/webp"}.get(suffix, "image/jpeg")
-        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        # 超大图等比缩放到长边 <= 1536 再发送：本地 VLM 上下文有限，
+        # 原图直发曾触发 4663 token > 4096 的 HTTP 400（详见 vision_image 文档）。
+        # 小图字节完全不变；透明底自动合成白底。
+        raw, mime = prepare_image(path)
+        b64 = base64.b64encode(raw).decode("ascii")
 
         payload = {
             "model": self.model,
