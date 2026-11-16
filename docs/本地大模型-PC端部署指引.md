@@ -253,7 +253,8 @@ Win+R 输入  shell:startup  回车
 - [x] NAS 上 `curl http://192.168.31.182:11434/api/tags` 返回 **HTTP 200**（已实测）
 - [x] 已配置开机自启（计划任务 `OllamaServe-AutoStart`，登录触发）
 - [ ] 防火墙规则限定来源为 NAS IP（可选加固，需管理员权限）
-- [ ] （更严格）`omnioffice-api` 容器内也能访问上面地址 ← 真机验证，交给你
+- [x] （更严格）`omnioffice-api` / `omnioffice-worker` 容器内 Python urllib 访问
+      `http://192.168.31.182:11434/api/tags` 均 HTTP 200；容器内 base64 图片真实识别 1.8 秒通过
 - [ ] PC 工作时段不休眠（系统电源设置，需你确认）
 - [ ] 首次识别耗时 69.6 秒（冷加载）→ 建议软件设置页把超时调到 180；预热后应 < 10 秒
 
