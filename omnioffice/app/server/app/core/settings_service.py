@@ -703,7 +703,7 @@ def import_config(db: Session, payload: dict[str, Any], owner: str = "") -> dict
 
     kind = str(payload.get("kind") or "")
     if kind and kind != CONFIG_EXPORT_KIND:
-        raise ValueError(f"不是全能办公室的配置文件（kind={kind or '未知'}）")
+        raise ValueError(f"不是 KwinkOffice 的配置文件（kind={kind or '未知'}）")
 
     app = payload.get("app")
     if isinstance(app, dict):

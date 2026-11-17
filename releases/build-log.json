@@ -241,5 +241,14 @@
     "fpk": "omnioffice_1.0.44_all_20261116.fpk",
     "commit": "82b0be5",
     "note": "图片识别前智能缩放：长边超1536等比缩小+透明合成白底，本地模型上下文降回4096省显存"
+  },
+  {
+    "ts": "2026-11-17T03:06:19.663Z",
+    "appname": "omnioffice",
+    "version": "1.0.45",
+    "platform": "all",
+    "fpk": "omnioffice_1.0.45_all_20261117.fpk",
+    "commit": "7a7bfb7",
+    "note": "统一图标为渐变O（桌面与软件内同源）+ 显示名改为 KwinkOffice"
   }
 ]

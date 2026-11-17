@@ -26,7 +26,7 @@ onMounted(() => {
       <div class="oo-boot-mark" aria-hidden="true">
         <span class="oo-boot-mark-text">O</span>
       </div>
-      <p class="oo-boot-text">正在加载全能办公室…</p>
+      <p class="oo-boot-text">正在加载 KwinkOffice…</p>
       <div class="oo-boot-dots" aria-hidden="true">
         <span /><span /><span />
       </div>

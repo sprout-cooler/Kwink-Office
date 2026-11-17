@@ -1,4 +1,4 @@
-"""全能办公室 服务端入口（FastAPI 常驻服务）。
+"""KwinkOffice 服务端入口（FastAPI 常驻服务）。
 
 平台关键约束（开发避坑指南 §1.2 / Agent 指南 案例 5）：
 1. 统一网关按 /app/omnioffice/xxx 原样转发、保留完整前缀 →

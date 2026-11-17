@@ -126,7 +126,7 @@ async function onLogout() {
     <div class="oo-main">
       <header class="oo-topbar">
         <div class="oo-topbar-lead">
-          <span class="oo-title">{{ store.activeModule?.displayName || "全能办公室" }}</span>
+          <span class="oo-title">{{ store.activeModule?.displayName || "KwinkOffice" }}</span>
           <span class="oo-topbar-sub oo-truncate">{{ store.displayName }} 的工作空间</span>
         </div>
         <span class="oo-spacer" />

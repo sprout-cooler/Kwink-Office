@@ -94,7 +94,7 @@ function switchTo(m: "login" | "register") {
           <span class="auth-logo-text">O</span>
         </div>
         <div class="auth-head-text">
-          <h1 class="auth-title">全能办公室</h1>
+          <h1 class="auth-title">KwinkOffice</h1>
           <p class="auth-sub">统一的工作入口 · NAS 账号 {{ props.nasUser }}</p>
         </div>
       </div>

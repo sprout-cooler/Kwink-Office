@@ -379,9 +379,9 @@ async function onFilePicked(e: Event) {
       <!-- 用户手册 -->
       <ElTabPane label="用户手册">
         <div class="manual">
-          <h3>欢迎使用全能办公室</h3>
+          <h3>欢迎使用 KwinkOffice</h3>
           <p class="manual-intro">
-            全能办公室是一个统一的工作入口，把分散在各系统的工作内容收拢到一处。内置周报模块，支持截图上传、AI 识别、数据校对与周报导出。
+            KwinkOffice 是一个统一的工作入口，把分散在各系统的工作内容收拢到一处。内置周报模块，支持截图上传、AI 识别、数据校对与周报导出。
           </p>
 
           <OOCard class="manual-card">
@@ -533,7 +533,7 @@ async function onFilePicked(e: Event) {
       <!-- 关于 -->
       <ElTabPane label="关于">
         <ElDescriptions :column="1" border>
-          <ElDescriptionsItem label="应用名称">全能办公室</ElDescriptionsItem>
+          <ElDescriptionsItem label="应用名称">KwinkOffice</ElDescriptionsItem>
           <ElDescriptionsItem label="版本">v{{ appVersion }}</ElDescriptionsItem>
           <ElDescriptionsItem label="平台">飞牛 fnOS（FPK 应用）</ElDescriptionsItem>
           <ElDescriptionsItem label="技术栈">

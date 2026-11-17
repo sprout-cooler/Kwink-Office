@@ -1,7 +1,7 @@
 {
   ".url": {
     "omnioffice.main": {
-      "title": "全能办公室",
+      "title": "KwinkOffice",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
       "protocol": "",
